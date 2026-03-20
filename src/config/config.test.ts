@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { createConfig } from "./config";
+import { createConfig } from "./schema";
 
 type ConfigFactory = (options?: {
 	env?: Record<string, string | undefined>;

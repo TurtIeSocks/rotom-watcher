@@ -1,13 +1,13 @@
-import type { CircuitBreaker } from "./circuit-breaker";
-import type { ConfigProvider } from "./config";
+import type { ConfigProvider } from "../config/schema";
+import type { LoggerLike } from "../observability/logger";
+import type { Metrics } from "../observability/metrics";
+import type { RotomApiClient } from "../rotom/client";
+import { sleep } from "../shared/utils";
+import type { CircuitBreaker } from "../runtime/circuit-breaker";
+import type { JobQueue } from "../runtime/job-queue";
+import type { ScriptRunner } from "../runtime/script-runner";
 import { evaluateDevices } from "./device-evaluation";
-import type { JobQueue } from "./job-queue";
-import type { LoggerLike } from "./logger";
-import type { Metrics } from "./metrics";
 import type { OriginStateTracker } from "./origin-state";
-import type { RotomApiClient } from "./rotom-api";
-import type { ScriptRunner } from "./script-runner";
-import { sleep } from "./utils";
 
 export interface DeviceMonitorDependencies {
 	circuitBreaker: CircuitBreaker;

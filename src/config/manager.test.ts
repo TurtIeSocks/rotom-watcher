@@ -3,12 +3,9 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import type { LoggerLike } from "./logger";
-import {
-	ConfigManager,
-	createConfigWatchHandler,
-	resolveConfigPath,
-} from "./config";
+import type { LoggerLike } from "../observability/logger";
+import { createConfigWatchHandler, resolveConfigPath } from "./file";
+import { ConfigManager } from "./manager";
 
 interface WatcherLike {
 	close(): void;

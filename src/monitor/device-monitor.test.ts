@@ -1,14 +1,15 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { CircuitBreaker } from "./circuit-breaker";
-import type { Config, ConfigProvider } from "./config";
+import type { Config, ConfigProvider } from "../config/schema";
+import type { LoggerLike } from "../observability/logger";
+import { Metrics } from "../observability/metrics";
+import { RotomApiClient } from "../rotom/client";
+import type { Device, StatusResponse, Worker } from "../rotom/types";
+import { CircuitBreaker } from "../runtime/circuit-breaker";
+import { JobQueue } from "../runtime/job-queue";
+import { ScriptRunner } from "../runtime/script-runner";
 import { DeviceMonitor } from "./device-monitor";
-import { JobQueue } from "./job-queue";
-import type { LoggerLike } from "./logger";
-import { Metrics } from "./metrics";
 import { OriginStateTracker } from "./origin-state";
-import { RotomApiClient } from "./rotom-api";
-import { ScriptRunner } from "./script-runner";
-import type { Device, ScriptMode, StatusResponse, Worker } from "./types";
+import type { ScriptMode } from "./types";
 
 const buildDevice = (overrides: Partial<Device> = {}): Device => ({
 	dateConnected: 0,
@@ -29,7 +30,7 @@ const buildDevice = (overrides: Partial<Device> = {}): Device => ({
 	noMessagesSent: 0,
 	origin: "alpha",
 	publicIp: "127.0.0.1",
-	version: "1.0.0",
+	version: 1,
 	...overrides,
 });
 

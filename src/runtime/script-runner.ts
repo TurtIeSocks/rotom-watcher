@@ -1,15 +1,15 @@
 import { spawn } from "node:child_process";
 
-import type { Config, ConfigProvider } from "./config";
-import type { LoggerLike } from "./logger";
-import type { Metrics, ScriptFailureReason } from "./metrics";
-import type { ScriptMode } from "./types";
+import type { Config, ConfigProvider } from "../config/schema";
+import type { ScriptMode } from "../monitor/types";
+import type { LoggerLike } from "../observability/logger";
+import type { Metrics, ScriptFailureReason } from "../observability/metrics";
 import {
 	calculateRetryDelay,
 	sanitizeOrigin,
 	sleep,
 	truncateOutput,
-} from "./utils";
+} from "../shared/utils";
 
 export class ScriptExecutionError extends Error {
 	constructor(

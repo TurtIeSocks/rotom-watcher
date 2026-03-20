@@ -1,10 +1,6 @@
-import { readFileSync, watch } from "node:fs";
 import path from "node:path";
 
-import { parse as parseToml } from "@iarna/toml";
 import { z } from "zod";
-
-import type { LoggerLike } from "./logger";
 
 export interface Config {
 	checkIntervalMs: number;
@@ -38,34 +34,7 @@ export interface CreateConfigOptions {
 	fileConfig?: unknown;
 }
 
-export interface ConfigReloadEvent {
-	changedKeys: Array<keyof Config>;
-	config: Config;
-	restartRequiredKeys: Array<keyof Config>;
-}
-
-export interface ConfigManagerOptions {
-	cancelScheduledReload?: (handle: unknown) => void;
-	configPath: string;
-	env?: Record<string, string | undefined>;
-	logger?: LoggerLike;
-	readFileImplementation?: (filePath: string, encoding: BufferEncoding) => string;
-	scheduleReload?: (reload: () => void) => unknown;
-	watchImplementation?: (
-		configPath: string,
-		onChange: () => void,
-	) => ConfigWatcherLike;
-}
-
-export interface ConfigWatcherLike {
-	close(): void;
-}
-
-type ConfigChangeListener = (event: ConfigReloadEvent) => void;
-
 const defaultScriptPath = path.resolve(import.meta.dir, "../../oci.sh");
-const defaultConfigPath = path.resolve(process.cwd(), "config.toml");
-const watchDebounceMs = 100;
 
 const fileConfigMappings = [
 	{
@@ -149,12 +118,6 @@ const fileConfigMappings = [
 		path: ["shutdown", "grace_period_ms"],
 	},
 ] as const;
-
-const restartRequiredConfigKeys: Array<keyof Config> = [
-	"logFormat",
-	"metricsHost",
-	"metricsPort",
-];
 
 const positiveInteger = (name: string, defaultValue: number) =>
 	z.preprocess(
@@ -274,165 +237,6 @@ const configSchema = z
 		}),
 	);
 
-export class ConfigManager implements ConfigProvider {
-	private currentConfig: Config;
-	private logger?: LoggerLike;
-	private scheduledReloadHandle?: unknown;
-	private readonly listeners = new Set<ConfigChangeListener>();
-	private watcher?: ConfigWatcherLike;
-
-	constructor(private readonly options: ConfigManagerOptions) {
-		this.logger = options.logger;
-		this.currentConfig = this.readValidatedConfig();
-	}
-
-	close(): void {
-		if (this.scheduledReloadHandle !== undefined) {
-			this.getCancelScheduledReload()(this.scheduledReloadHandle);
-			this.scheduledReloadHandle = undefined;
-		}
-
-		this.watcher?.close();
-		this.watcher = undefined;
-	}
-
-	getConfig(): Config {
-		return this.currentConfig;
-	}
-
-	reloadFromDisk(trigger: "manual" | "watch" = "manual"): boolean {
-		try {
-			const nextConfig = this.readValidatedConfig();
-			const changedKeys = getChangedConfigKeys(this.currentConfig, nextConfig);
-
-			if (changedKeys.length === 0) {
-				this.logger?.debug(
-					{
-						configPath: this.options.configPath,
-						trigger,
-					},
-					"Config reload found no changes",
-				);
-				return true;
-			}
-
-			this.currentConfig = nextConfig;
-			const restartRequiredKeys = changedKeys.filter((key) =>
-				restartRequiredConfigKeys.includes(key),
-			);
-
-			this.logger?.info(
-				{
-					changedKeys,
-					configPath: this.options.configPath,
-					trigger,
-				},
-				"Reloaded configuration from TOML",
-			);
-
-			if (restartRequiredKeys.length > 0) {
-				this.logger?.warn(
-					{
-						restartRequiredKeys,
-					},
-					"Some config changes require a process restart to fully apply",
-				);
-			}
-
-			const event: ConfigReloadEvent = {
-				changedKeys,
-				config: nextConfig,
-				restartRequiredKeys,
-			};
-
-			for (const listener of this.listeners) {
-				listener(event);
-			}
-
-			return true;
-		} catch (error) {
-			this.logger?.error(
-				{
-					configPath: this.options.configPath,
-					error,
-					trigger,
-				},
-				"Rejected invalid configuration reload and kept the last known good config",
-			);
-			return false;
-		}
-	}
-
-	setLogger(logger: LoggerLike): void {
-		this.logger = logger;
-	}
-
-	startWatching(): void {
-		if (this.watcher) {
-			return;
-		}
-
-		this.watcher = this.getWatchImplementation()(
-			this.options.configPath,
-			() => {
-				if (this.scheduledReloadHandle !== undefined) {
-					this.getCancelScheduledReload()(this.scheduledReloadHandle);
-				}
-
-				this.scheduledReloadHandle = this.getScheduleReload()(() => {
-					this.scheduledReloadHandle = undefined;
-					this.reloadFromDisk("watch");
-				});
-			},
-		);
-	}
-
-	subscribe(listener: ConfigChangeListener): () => void {
-		this.listeners.add(listener);
-
-		return () => {
-			this.listeners.delete(listener);
-		};
-	}
-
-	private getCancelScheduledReload(): (handle: unknown) => void {
-		return this.options.cancelScheduledReload ?? ((handle) => clearTimeout(handle as ReturnType<typeof setTimeout>));
-	}
-
-	private getReadFileImplementation(): (
-		filePath: string,
-		encoding: BufferEncoding,
-	) => string {
-		return this.options.readFileImplementation ?? readFileSync;
-	}
-
-	private getScheduleReload(): (reload: () => void) => unknown {
-		return (
-			this.options.scheduleReload ??
-			((reload) => setTimeout(reload, watchDebounceMs))
-		);
-	}
-
-	private getWatchImplementation(): (
-		configPath: string,
-		onChange: () => void,
-	) => ConfigWatcherLike {
-		return this.options.watchImplementation ?? defaultWatchImplementation;
-	}
-
-	private readValidatedConfig(): Config {
-		const fileConfig = loadTomlConfig(
-			this.options.configPath,
-			this.getReadFileImplementation(),
-		);
-
-		return createConfig({
-			env: this.options.env ?? process.env,
-			fileConfig,
-		});
-	}
-}
-
 export const createConfig = ({
 	env = process.env,
 	fileConfig,
@@ -443,38 +247,6 @@ export const createConfig = ({
 	};
 
 	return configSchema.parse(mergedInputs);
-};
-
-export const resolveConfigPath = (
-	env: Record<string, string | undefined> = process.env,
-): string => path.resolve(env.ROTOM_CONFIG_PATH ?? defaultConfigPath);
-
-export const createConfigWatchHandler = (
-	configPath: string,
-	onChange: () => void,
-): ((eventType: string, fileName: string | null) => void) => {
-	const configFileName = path.basename(configPath);
-
-	return (_eventType, fileName) => {
-		if (!fileName || fileName.toString() === configFileName) {
-			onChange();
-		}
-	};
-};
-
-const defaultWatchImplementation = (
-	configPath: string,
-	onChange: () => void,
-): ConfigWatcherLike => {
-	const configDirectory = path.dirname(configPath);
-	const watcher = watch(
-		configDirectory,
-		createConfigWatchHandler(configPath, onChange),
-	);
-
-	return {
-		close: () => watcher.close(),
-	};
 };
 
 const flattenFileConfig = (fileConfig: unknown): Record<string, unknown> => {
@@ -489,14 +261,6 @@ const flattenFileConfig = (fileConfig: unknown): Record<string, unknown> => {
 
 	return flattened;
 };
-
-const getChangedConfigKeys = (
-	previousConfig: Config,
-	nextConfig: Config,
-): Array<keyof Config> =>
-	(Object.keys(previousConfig) as Array<keyof Config>).filter(
-		(key) => previousConfig[key] !== nextConfig[key],
-	);
 
 const getNestedValue = (
 	source: unknown,
@@ -513,18 +277,6 @@ const getNestedValue = (
 	}
 
 	return current;
-};
-
-const loadTomlConfig = (
-	configPath: string,
-	readFileImplementation: (filePath: string, encoding: BufferEncoding) => string,
-): unknown => {
-	try {
-		return parseToml(readFileImplementation(configPath, "utf8"));
-	} catch (error) {
-		const message = error instanceof Error ? error.message : String(error);
-		throw new Error(`Failed to load TOML config at ${configPath}: ${message}`);
-	}
 };
 
 const removeUndefinedEntries = (

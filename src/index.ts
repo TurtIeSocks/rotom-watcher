@@ -1,13 +1,14 @@
-import { CircuitBreaker } from "./circuit-breaker";
-import { ConfigManager, resolveConfigPath } from "./config";
-import { DeviceMonitor } from "./device-monitor";
-import { JobQueue } from "./job-queue";
-import { createLogger } from "./logger";
-import { Metrics } from "./metrics";
-import { ObservabilityServer } from "./observability-server";
-import { OriginStateTracker } from "./origin-state";
-import { RotomApiClient } from "./rotom-api";
-import { ScriptRunner } from "./script-runner";
+import { resolveConfigPath } from "./config/file";
+import { ConfigManager } from "./config/manager";
+import { DeviceMonitor } from "./monitor/device-monitor";
+import { OriginStateTracker } from "./monitor/origin-state";
+import { createLogger } from "./observability/logger";
+import { Metrics } from "./observability/metrics";
+import { ObservabilityServer } from "./observability/server";
+import { RotomApiClient } from "./rotom/client";
+import { CircuitBreaker } from "./runtime/circuit-breaker";
+import { JobQueue } from "./runtime/job-queue";
+import { ScriptRunner } from "./runtime/script-runner";
 
 const configManager = new ConfigManager({
 	configPath: resolveConfigPath(),

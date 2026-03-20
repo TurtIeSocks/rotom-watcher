@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { evaluateDevices } from "./device-evaluation";
-import type { Device, Worker } from "./types";
+import type { Device, Worker } from "../rotom/types";
 
 const buildDevice = (overrides: Partial<Device> = {}): Device => ({
 	dateConnected: 0,
@@ -22,7 +22,7 @@ const buildDevice = (overrides: Partial<Device> = {}): Device => ({
 	noMessagesSent: 0,
 	origin: "alpha",
 	publicIp: "127.0.0.1",
-	version: "1.0.0",
+	version: 1,
 	...overrides,
 });
 

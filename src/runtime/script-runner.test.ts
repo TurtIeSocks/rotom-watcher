@@ -4,9 +4,9 @@ import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import type { Config, ConfigProvider } from "./config";
-import type { LoggerLike } from "./logger";
-import { Metrics } from "./metrics";
+import type { Config, ConfigProvider } from "../config/schema";
+import type { LoggerLike } from "../observability/logger";
+import { Metrics } from "../observability/metrics";
 import { ScriptExecutionError, ScriptRunner } from "./script-runner";
 
 interface CapturedLog {

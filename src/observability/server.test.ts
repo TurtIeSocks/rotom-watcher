@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 
 import type { LoggerLike } from "./logger";
 import { Metrics } from "./metrics";
-import { ObservabilityServer } from "./observability-server";
+import { ObservabilityServer } from "./server";
 
 const logger: LoggerLike = {
 	debug: () => undefined,

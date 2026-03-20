@@ -1,4 +1,4 @@
-import type { LoggerLike } from "./logger";
+import type { LoggerLike } from "../observability/logger";
 
 type QueueJob = () => Promise<void>;
 

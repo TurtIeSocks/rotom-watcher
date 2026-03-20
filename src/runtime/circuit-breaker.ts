@@ -1,4 +1,4 @@
-import type { LoggerLike } from "./logger";
+import type { LoggerLike } from "../observability/logger";
 
 export type CircuitBreakerState = "CLOSED" | "HALF_OPEN" | "OPEN";
 

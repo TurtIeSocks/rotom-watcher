@@ -1,9 +1,9 @@
 import { z } from "zod";
 
-import type { ConfigProvider } from "./config";
-import type { Metrics } from "./metrics";
+import type { ConfigProvider } from "../config/schema";
+import type { Metrics } from "../observability/metrics";
+import { fetchWithTimeout } from "../shared/utils";
 import type { StatusResponse } from "./types";
-import { fetchWithTimeout } from "./utils";
 
 const lastMemorySchema = z.object({
 	memFree: z.number(),

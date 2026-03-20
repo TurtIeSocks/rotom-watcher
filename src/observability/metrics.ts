@@ -6,9 +6,9 @@ import {
 	Registry,
 } from "prom-client";
 
-import type { CircuitBreakerState } from "./circuit-breaker";
-import type { QueueStatus, QueueStatusObserver } from "./job-queue";
-import type { OriginStateStats, ScriptMode } from "./types";
+import type { OriginStateStats, ScriptMode } from "../monitor/types";
+import type { CircuitBreakerState } from "../runtime/circuit-breaker";
+import type { QueueStatus, QueueStatusObserver } from "../runtime/job-queue";
 
 export type ApiOperation = "delete_device" | "fetch_status";
 export type ApiRequestResult = "failure" | "success";

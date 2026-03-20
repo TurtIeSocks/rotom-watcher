@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 
-import type { ConfigProvider } from "./config";
-import { RotomApiClient } from "./rotom-api";
+import type { ConfigProvider } from "../config/schema";
+import { RotomApiClient } from "./client";
 
 const originalFetch = globalThis.fetch;
 
@@ -49,7 +49,7 @@ describe("RotomApiClient", () => {
 					noMessagesSent: 10,
 					origin: "alpha",
 					publicIp: "127.0.0.1",
-					version: "1.0.0",
+					version: 1,
 				},
 			],
 			workers: [
