@@ -157,4 +157,37 @@ describe("evaluateDevices", () => {
 			},
 		]);
 	});
+
+	test("sorts origin decisions and online origins across multiple origins", () => {
+		const result = evaluateDevices({
+			currentTimeMs: 60_000,
+			deviceTimeoutMinutes: 10,
+			devices: [
+				buildDevice({
+					deviceId: "zeta-alive",
+					origin: "zeta",
+					dateLastMessageReceived: 59_000,
+				}),
+				buildDevice({
+					deviceId: "beta-dead",
+					origin: "beta",
+					dateLastMessageReceived: 0,
+					isAlive: false,
+				}),
+				buildDevice({
+					deviceId: "alpha-alive",
+					origin: "alpha",
+					dateLastMessageReceived: 58_000,
+				}),
+			],
+			workers: [buildWorker("zeta"), buildWorker("alpha")],
+		});
+
+		expect(result.onlineOrigins).toEqual(["alpha", "zeta"]);
+		expect(result.originDecisions.map((decision) => decision.origin)).toEqual([
+			"alpha",
+			"beta",
+			"zeta",
+		]);
+	});
 });

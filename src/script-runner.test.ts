@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { EventEmitter } from "node:events";
 import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -162,6 +163,37 @@ exit 1
 		const details = errorLog?.args[0] as { stderr?: string } | undefined;
 
 		expect(details?.stderr).toContain("[truncated");
+	});
+
+	test("classifies child process spawn failures", async () => {
+		const logs: CapturedLog[] = [];
+		const failingSpawn = (() => {
+			const child = new EventEmitter() as EventEmitter & {
+				stderr: EventEmitter;
+				stdout: EventEmitter;
+			};
+			child.stdout = new EventEmitter();
+			child.stderr = new EventEmitter();
+
+			queueMicrotask(() => {
+				child.emit("error", new Error("spawn failed"));
+			});
+
+			return child;
+		}) as unknown as typeof import("node:child_process").spawn;
+
+		const runner = new ScriptRunner(
+			createConfigProvider(createConfig("/tmp/test-script.sh")),
+			createLogger(logs),
+			new Metrics(),
+			async () => undefined,
+			() => 0,
+			failingSpawn,
+		);
+
+		await expect(runner.execute("alpha", "restart")).rejects.toMatchObject({
+			reason: "spawn_error",
+		});
 	});
 });
 

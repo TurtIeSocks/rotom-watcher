@@ -31,4 +31,27 @@ describe("OriginStateTracker", () => {
 			byCount: {},
 		});
 	});
+
+	test("updates thresholds and reports stats for tracked origins", () => {
+		const tracker = new OriginStateTracker(3);
+
+		tracker.recordOfflineAttempt("alpha", 1_000);
+		tracker.recordOfflineAttempt("alpha", 2_000);
+		tracker.recordOfflineAttempt("beta", 3_000);
+
+		expect(tracker.getStats()).toEqual({
+			byCount: {
+				"1": 1,
+				"2": 1,
+			},
+			totalTracked: 2,
+		});
+		expect(tracker.getScriptMode("alpha")).toBe("restart");
+
+		tracker.setRestartThreshold(2);
+		expect(tracker.getScriptMode("alpha")).toBe("update");
+
+		tracker.clearOriginState("missing-origin");
+		expect(tracker.getStats().totalTracked).toBe(2);
+	});
 });

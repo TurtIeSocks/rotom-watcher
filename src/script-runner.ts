@@ -28,6 +28,7 @@ export class ScriptRunner {
 		private readonly metrics: Metrics,
 		private readonly sleepFn: typeof sleep = sleep,
 		private readonly random: () => number = Math.random,
+		private readonly spawnImplementation: typeof spawn = spawn,
 	) {}
 
 	async execute(
@@ -120,7 +121,7 @@ export class ScriptRunner {
 			let spawnFailed = false;
 			let timeoutTriggered = false;
 
-			const child = spawn("bash", commandArgs, {
+			const child = this.spawnImplementation("bash", commandArgs, {
 				stdio: ["ignore", "pipe", "pipe"],
 			});
 

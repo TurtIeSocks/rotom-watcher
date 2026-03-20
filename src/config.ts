@@ -449,17 +449,28 @@ export const resolveConfigPath = (
 	env: Record<string, string | undefined> = process.env,
 ): string => path.resolve(env.ROTOM_CONFIG_PATH ?? defaultConfigPath);
 
+export const createConfigWatchHandler = (
+	configPath: string,
+	onChange: () => void,
+): ((eventType: string, fileName: string | null) => void) => {
+	const configFileName = path.basename(configPath);
+
+	return (_eventType, fileName) => {
+		if (!fileName || fileName.toString() === configFileName) {
+			onChange();
+		}
+	};
+};
+
 const defaultWatchImplementation = (
 	configPath: string,
 	onChange: () => void,
 ): ConfigWatcherLike => {
 	const configDirectory = path.dirname(configPath);
-	const configFileName = path.basename(configPath);
-	const watcher = watch(configDirectory, (_eventType, fileName) => {
-		if (!fileName || fileName.toString() === configFileName) {
-			onChange();
-		}
-	});
+	const watcher = watch(
+		configDirectory,
+		createConfigWatchHandler(configPath, onChange),
+	);
 
 	return {
 		close: () => watcher.close(),

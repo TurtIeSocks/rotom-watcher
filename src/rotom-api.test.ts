@@ -10,6 +10,23 @@ afterEach(() => {
 });
 
 describe("RotomApiClient", () => {
+	test("returns validated status payloads on success", async () => {
+		globalThis.fetch = (async () =>
+			Response.json({
+				devices: [],
+				workers: [],
+			})) as unknown as typeof fetch;
+
+		const client = new RotomApiClient(
+			createConfigProvider("https://example.com", 1_000),
+		);
+
+		await expect(client.fetchStatus()).resolves.toEqual({
+			devices: [],
+			workers: [],
+		});
+	});
+
 	test("classifies non-2xx responses", async () => {
 		globalThis.fetch = (async () =>
 			new Response("nope", {
@@ -57,6 +74,48 @@ describe("RotomApiClient", () => {
 
 		await expect(client.fetchStatus()).rejects.toMatchObject({
 			code: "invalid_json",
+		});
+	});
+
+	test("returns false when device deletion gets a non-2xx response", async () => {
+		globalThis.fetch = (async () =>
+			new Response("nope", {
+				status: 404,
+			})) as unknown as typeof fetch;
+
+		const client = new RotomApiClient(
+			createConfigProvider("https://example.com", 1_000),
+		);
+
+		await expect(client.deleteDevice("device-1")).resolves.toBe(false);
+	});
+
+	test("classifies timeout failures during device deletion", async () => {
+		globalThis.fetch = (async () => {
+			throw new DOMException("Timed out", "AbortError");
+		}) as unknown as typeof fetch;
+
+		const client = new RotomApiClient(
+			createConfigProvider("https://example.com", 1_000),
+		);
+
+		await expect(client.deleteDevice("device-1")).rejects.toMatchObject({
+			code: "timeout",
+		});
+	});
+
+	test("classifies unknown fetch failures as network errors", async () => {
+		globalThis.fetch = (async () => {
+			throw "boom";
+		}) as unknown as typeof fetch;
+
+		const client = new RotomApiClient(
+			createConfigProvider("https://example.com", 1_000),
+		);
+
+		await expect(client.fetchStatus()).rejects.toMatchObject({
+			code: "network_error",
+			message: "boom",
 		});
 	});
 });

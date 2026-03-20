@@ -4,7 +4,11 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 
 import type { LoggerLike } from "./logger";
-import { ConfigManager } from "./config";
+import {
+	ConfigManager,
+	createConfigWatchHandler,
+	resolveConfigPath,
+} from "./config";
 
 interface WatcherLike {
 	close(): void;
@@ -91,6 +95,26 @@ level = "trace"
 		});
 	});
 
+	test("does not notify listeners when a reload changes nothing", () => {
+		const directory = mkdtempSync(path.join(tmpdir(), "rotom-config-manager-"));
+		const configPath = path.join(directory, "config.toml");
+		writeFileSync(configPath, baseToml, "utf8");
+		let notifications = 0;
+
+		const manager = new ConfigManager({
+			configPath,
+			env: {},
+			logger,
+		});
+
+		manager.subscribe(() => {
+			notifications++;
+		});
+
+		expect(manager.reloadFromDisk()).toBe(true);
+		expect(notifications).toBe(0);
+	});
+
 	test("keeps the last known good config when a reload is invalid", () => {
 		const directory = mkdtempSync(path.join(tmpdir(), "rotom-config-manager-"));
 		const configPath = path.join(directory, "config.toml");
@@ -129,5 +153,107 @@ level = "trace"
 		watchCallback?.();
 
 		expect(manager.getConfig()).toEqual(initialConfig);
+	});
+
+	test("close cancels pending reloads and closes the watcher", () => {
+		const directory = mkdtempSync(path.join(tmpdir(), "rotom-config-manager-"));
+		const configPath = path.join(directory, "config.toml");
+		writeFileSync(configPath, baseToml, "utf8");
+
+		let cancelled = false;
+		let closeCalls = 0;
+		let watchCallback: WatchCallback | undefined;
+		const manager = new ConfigManager({
+			cancelScheduledReload: () => {
+				cancelled = true;
+			},
+			configPath,
+			env: {},
+			logger,
+			scheduleReload: () => 123,
+			watchImplementation: (_path, callback) => {
+				watchCallback = callback;
+				return {
+					close: () => {
+						closeCalls++;
+					},
+				} satisfies WatcherLike;
+			},
+		});
+
+		manager.startWatching();
+		watchCallback?.();
+		manager.close();
+
+		expect(cancelled).toBe(true);
+		expect(closeCalls).toBe(1);
+	});
+
+	test("supports updating the logger and unsubscribing listeners", () => {
+		const directory = mkdtempSync(path.join(tmpdir(), "rotom-config-manager-"));
+		const configPath = path.join(directory, "config.toml");
+		writeFileSync(configPath, baseToml, "utf8");
+		let notifications = 0;
+		const manager = new ConfigManager({
+			configPath,
+			env: {},
+			logger,
+		});
+
+		manager.setLogger(logger);
+		const unsubscribe = manager.subscribe(() => {
+			notifications++;
+		});
+
+		unsubscribe();
+		manager.reloadFromDisk();
+
+		expect(notifications).toBe(0);
+	});
+
+	test("filters watch events to the config file and unnamed events", () => {
+		let reloads = 0;
+		const handleWatchEvent = createConfigWatchHandler(
+			"/tmp/rotom/config.toml",
+			() => {
+				reloads++;
+			},
+		);
+
+		handleWatchEvent("change", "other.toml");
+		expect(reloads).toBe(0);
+
+		handleWatchEvent("change", "config.toml");
+		handleWatchEvent("rename", null);
+
+		expect(reloads).toBe(2);
+	});
+
+	test("can start and stop watching with the default watcher", () => {
+		const directory = mkdtempSync(path.join(tmpdir(), "rotom-config-manager-"));
+		const configPath = path.join(directory, "config.toml");
+		writeFileSync(configPath, baseToml, "utf8");
+
+		const manager = new ConfigManager({
+			configPath,
+			env: {},
+			logger,
+		});
+
+		manager.startWatching();
+		manager.close();
+
+		expect(manager.getConfig().rotomApiBaseUrl).toBe(
+			"https://file.example.com/",
+		);
+	});
+
+	test("resolves the default and overridden config path", () => {
+		expect(resolveConfigPath({})).toBe(path.resolve(process.cwd(), "config.toml"));
+		expect(
+			resolveConfigPath({
+				ROTOM_CONFIG_PATH: "./deploy/rotom.toml",
+			}),
+		).toBe(path.resolve("./deploy/rotom.toml"));
 	});
 });

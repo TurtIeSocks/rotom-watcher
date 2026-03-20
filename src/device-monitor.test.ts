@@ -66,10 +66,22 @@ const logger: LoggerLike = {
 
 const originalSetTimeout = globalThis.setTimeout;
 const originalClearTimeout = globalThis.clearTimeout;
+const originalProcessOnce = process.once;
+
+const createCapturingLogger = (errorLogs: unknown[]): LoggerLike => ({
+	debug: () => undefined,
+	error: (...args: unknown[]) => {
+		errorLogs.push(args);
+	},
+	info: () => undefined,
+	warn: () => undefined,
+});
 
 afterEach(() => {
 	globalThis.setTimeout = originalSetTimeout;
 	globalThis.clearTimeout = originalClearTimeout;
+	process.once = originalProcessOnce;
+	process.exitCode = undefined;
 });
 
 class TestStatusApiClient extends RotomApiClient {
@@ -318,6 +330,217 @@ describe("DeviceMonitor", () => {
 		monitor.start();
 
 		expect(scheduledCallbacks).toHaveLength(1);
+	});
+
+	test("logs queue failures and poll failures", async () => {
+		const errorLogs: unknown[] = [];
+		const capturingLogger = createCapturingLogger(errorLogs);
+		const explodingQueue = {
+			add: async () => {
+				throw new Error("queue exploded");
+			},
+			getStatus: () => ({
+				activeOrigins: [],
+				capacity: 2,
+				duplicateRejectedTotal: 0,
+				queued: 0,
+				running: 0,
+				saturated: false,
+			}),
+		} as unknown as JobQueue;
+		const offlineMonitor = new DeviceMonitor({
+			circuitBreaker: new CircuitBreaker(5, 60_000, capturingLogger, () => 0),
+			configProvider: createConfigProvider(config),
+			jobQueue: explodingQueue,
+			logger: capturingLogger,
+			metrics: new Metrics(),
+			now: () => 15 * 60 * 1_000,
+			originStateTracker: new OriginStateTracker(2, capturingLogger),
+			scriptRunner: new TestScriptRunner(),
+			statusApiClient: new TestStatusApiClient(
+				{
+					devices: [
+						buildDevice({
+							deviceId: "alpha-stale-1",
+							dateLastMessageReceived: 0,
+							isAlive: false,
+						}),
+					],
+					workers: [],
+				},
+				[],
+			),
+		});
+
+		await offlineMonitor.checkAndRunScript();
+
+		const failingStatusClient = new TestStatusApiClient(
+			{
+				devices: [],
+				workers: [],
+			},
+			[],
+		);
+		failingStatusClient.fetchStatus = async () => {
+			throw new Error("boom");
+		};
+
+		const failingMonitor = new DeviceMonitor({
+			circuitBreaker: new CircuitBreaker(5, 60_000, capturingLogger, () => 0),
+			configProvider: createConfigProvider(config),
+			jobQueue: new JobQueue(2, capturingLogger),
+			logger: capturingLogger,
+			metrics: new Metrics(),
+			now: () => 0,
+			originStateTracker: new OriginStateTracker(2, capturingLogger),
+			scriptRunner: new TestScriptRunner(),
+			statusApiClient: failingStatusClient,
+		});
+
+		await failingMonitor.checkAndRunScript();
+
+		expect(errorLogs.length).toBeGreaterThan(1);
+	});
+
+	test("stop is idempotent and executes the shutdown hook once", async () => {
+		let shutdownCalls = 0;
+		const monitor = new DeviceMonitor({
+			circuitBreaker: new CircuitBreaker(5, 60_000, logger, () => 0),
+			configProvider: createConfigProvider(config),
+			jobQueue: new JobQueue(2, logger),
+			logger,
+			metrics: new Metrics(),
+			onShutdown: async () => {
+				shutdownCalls++;
+			},
+			now: () => 0,
+			originStateTracker: new OriginStateTracker(2, logger),
+			scriptRunner: new TestScriptRunner(),
+			statusApiClient: new TestStatusApiClient(
+				{
+					devices: [],
+					workers: [],
+				},
+				[],
+			),
+		});
+
+		const stopOne = monitor.stop("manual", 0);
+		const stopTwo = monitor.stop("manual", 0);
+
+		expect(stopOne).toBe(stopTwo);
+		await stopOne;
+		expect(shutdownCalls).toBe(1);
+	});
+
+	test("registers signal handlers and routes them through stop", async () => {
+		const errorLogs: unknown[] = [];
+		const capturingLogger = createCapturingLogger(errorLogs);
+		const handlers = new Map<string, (...args: unknown[]) => void>();
+		const scheduledCallbacks: Array<() => void> = [];
+
+		globalThis.setTimeout = ((callback: Parameters<typeof setTimeout>[0]) => {
+			scheduledCallbacks.push(callback as () => void);
+			return 1 as unknown as ReturnType<typeof setTimeout>;
+		}) as typeof setTimeout;
+		globalThis.clearTimeout = (() => undefined) as typeof clearTimeout;
+		process.once = ((event: string, handler: (...args: unknown[]) => void) => {
+			handlers.set(event, handler);
+			return process;
+		}) as typeof process.once;
+
+		const monitor = new DeviceMonitor({
+			circuitBreaker: new CircuitBreaker(5, 60_000, capturingLogger, () => 0),
+			configProvider: createConfigProvider(config),
+			jobQueue: new JobQueue(2, capturingLogger),
+			logger: capturingLogger,
+			metrics: new Metrics(),
+			now: () => 0,
+			originStateTracker: new OriginStateTracker(2, capturingLogger),
+			scriptRunner: new TestScriptRunner(),
+			statusApiClient: new TestStatusApiClient(
+				{
+					devices: [],
+					workers: [],
+				},
+				[],
+			),
+		});
+
+		const stopCalls: Array<{ exitCode: number; signal: string }> = [];
+		(monitor as { stop: (signal: string, exitCode: number) => Promise<void> }).stop =
+			async (signal: string, exitCode: number) => {
+				stopCalls.push({
+					exitCode,
+					signal,
+				});
+			};
+		(monitor as unknown as { runScheduledCheck: () => Promise<void> }).runScheduledCheck =
+			async () => undefined;
+
+		monitor.start();
+		scheduledCallbacks[0]?.();
+		handlers.get("SIGINT")?.();
+		handlers.get("SIGTERM")?.();
+		handlers.get("uncaughtException")?.(new Error("uncaught"));
+		handlers.get("unhandledRejection")?.("nope");
+
+		expect(stopCalls).toEqual([
+			{
+				exitCode: 0,
+				signal: "SIGINT",
+			},
+			{
+				exitCode: 0,
+				signal: "SIGTERM",
+			},
+			{
+				exitCode: 1,
+				signal: "uncaughtException",
+			},
+			{
+				exitCode: 1,
+				signal: "unhandledRejection",
+			},
+		]);
+		expect(errorLogs.length).toBe(2);
+	});
+
+	test("reschedules after a scheduled check when not shutting down", async () => {
+		const scheduledDelays: number[] = [];
+		const monitor = new DeviceMonitor({
+			circuitBreaker: new CircuitBreaker(5, 60_000, logger, () => 0),
+			configProvider: createConfigProvider({
+				...config,
+				checkIntervalMs: 12_345,
+			}),
+			jobQueue: new JobQueue(2, logger),
+			logger,
+			metrics: new Metrics(),
+			now: () => 0,
+			originStateTracker: new OriginStateTracker(2, logger),
+			scriptRunner: new TestScriptRunner(),
+			statusApiClient: new TestStatusApiClient(
+				{
+					devices: [],
+					workers: [],
+				},
+				[],
+			),
+		});
+
+		(monitor as unknown as { checkAndRunScript: () => Promise<void> }).checkAndRunScript =
+			async () => undefined;
+		(monitor as unknown as { scheduleNextCheck: (delayMs: number) => void }).scheduleNextCheck =
+			(delayMs: number) => {
+				scheduledDelays.push(delayMs);
+			};
+
+		await (
+			monitor as unknown as { runScheduledCheck: () => Promise<void> }
+		).runScheduledCheck();
+
+		expect(scheduledDelays).toEqual([12_345]);
 	});
 });
 
