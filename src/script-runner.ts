@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 
-import type { Config } from "./config";
+import type { Config, ConfigProvider } from "./config";
 import type { LoggerLike } from "./logger";
 import type { Metrics, ScriptFailureReason } from "./metrics";
 import type { ScriptMode } from "./types";
@@ -23,7 +23,7 @@ export class ScriptExecutionError extends Error {
 
 export class ScriptRunner {
 	constructor(
-		private readonly config: Config,
+		private readonly configProvider: ConfigProvider,
 		private readonly logger: LoggerLike,
 		private readonly metrics: Metrics,
 		private readonly sleepFn: typeof sleep = sleep,
@@ -35,9 +35,10 @@ export class ScriptRunner {
 		scriptMode: ScriptMode,
 		attempt = 0,
 	): Promise<void> {
+		const config = this.configProvider.getConfig();
 		const sanitizedOrigin = sanitizeOrigin(origin);
-		const scriptArg = this.resolveScriptArg(scriptMode);
-		const commandArgs = [this.config.scriptPath, scriptArg, sanitizedOrigin];
+		const scriptArg = this.resolveScriptArg(config, scriptMode);
+		const commandArgs = [config.scriptPath, scriptArg, sanitizedOrigin];
 		const startTime = Date.now();
 
 		this.metrics.recordScriptAttempt(scriptMode);
@@ -55,7 +56,7 @@ export class ScriptRunner {
 		this.logger.info(
 			{
 				attempt: attempt + 1,
-				maxAttempts: this.config.maxRetries + 1,
+				maxAttempts: config.maxRetries + 1,
 				origin: sanitizedOrigin,
 				scriptMode,
 			},
@@ -65,19 +66,20 @@ export class ScriptRunner {
 		try {
 			await this.runCommand(
 				commandArgs,
+				config,
 				sanitizedOrigin,
 				scriptMode,
 				startTime,
 			);
 		} catch (error) {
-			if (attempt >= this.config.maxRetries) {
+			if (attempt >= config.maxRetries) {
 				throw error;
 			}
 
 			const delay = calculateRetryDelay(
 				attempt,
-				this.config.initialRetryDelayMs,
-				this.config.maxRetryDelayMs,
+				config.initialRetryDelayMs,
+				config.maxRetryDelayMs,
 				0.2,
 				this.random,
 			);
@@ -98,14 +100,15 @@ export class ScriptRunner {
 		}
 	}
 
-	private resolveScriptArg(scriptMode: ScriptMode): string {
+	private resolveScriptArg(config: Config, scriptMode: ScriptMode): string {
 		return scriptMode === "update"
-			? this.config.scriptUpdate
-			: this.config.scriptRestart;
+			? config.scriptUpdate
+			: config.scriptRestart;
 	}
 
 	private runCommand(
 		commandArgs: string[],
+		config: Config,
 		origin: string,
 		scriptMode: ScriptMode,
 		startTime: number,
@@ -124,7 +127,7 @@ export class ScriptRunner {
 			const timeoutId = setTimeout(() => {
 				timeoutTriggered = true;
 				child.kill("SIGTERM");
-			}, this.config.scriptTimeoutMs);
+			}, config.scriptTimeoutMs);
 
 			child.stdout.on("data", (chunk: Buffer | string) => {
 				stdout += chunk.toString();
@@ -144,6 +147,7 @@ export class ScriptRunner {
 				clearTimeout(timeoutId);
 				reject(
 					this.handleFailure(origin, scriptMode, startTime, "spawn_error", {
+						config,
 						error,
 						stderr,
 						stdout,
@@ -162,6 +166,7 @@ export class ScriptRunner {
 				if (timeoutTriggered) {
 					reject(
 						this.handleFailure(origin, scriptMode, startTime, "timeout", {
+							config,
 							code,
 							signal,
 							stderr,
@@ -178,6 +183,7 @@ export class ScriptRunner {
 				if (signal) {
 					reject(
 						this.handleFailure(origin, scriptMode, startTime, "signal", {
+							config,
 							code,
 							signal,
 							stderr,
@@ -190,6 +196,7 @@ export class ScriptRunner {
 				if (code !== 0) {
 					reject(
 						this.handleFailure(origin, scriptMode, startTime, "exit_code", {
+							config,
 							code,
 							signal,
 							stderr,
@@ -243,6 +250,7 @@ export class ScriptRunner {
 		startTime: number,
 		reason: ScriptFailureReason,
 		details: {
+			config: Config;
 			code?: number | null;
 			error?: Error;
 			signal?: NodeJS.Signals | null;
@@ -272,7 +280,7 @@ export class ScriptRunner {
 
 		const message =
 			reason === "timeout"
-				? `Recovery script timed out after ${this.config.scriptTimeoutMs}ms`
+				? `Recovery script timed out after ${details.config.scriptTimeoutMs}ms`
 				: (details.error?.message ??
 					`Recovery script failed with reason ${reason}`);
 

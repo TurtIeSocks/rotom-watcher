@@ -5,14 +5,18 @@ export type CircuitBreakerState = "CLOSED" | "HALF_OPEN" | "OPEN";
 export class CircuitBreaker {
 	private failures = 0;
 	private nextAttempt: number;
+	private resetTimeMs: number;
 	private state: CircuitBreakerState = "CLOSED";
+	private threshold: number;
 
 	constructor(
-		private readonly threshold: number,
-		private readonly resetTimeMs: number,
+		threshold: number,
+		resetTimeMs: number,
 		private readonly logger: LoggerLike,
 		private readonly now: () => number = Date.now,
 	) {
+		this.threshold = threshold;
+		this.resetTimeMs = resetTimeMs;
 		this.nextAttempt = this.now();
 	}
 
@@ -36,6 +40,11 @@ export class CircuitBreaker {
 
 	getState(): CircuitBreakerState {
 		return this.state;
+	}
+
+	updateConfig(threshold: number, resetTimeMs: number): void {
+		this.threshold = threshold;
+		this.resetTimeMs = resetTimeMs;
 	}
 
 	recordFailure(): void {

@@ -3,7 +3,7 @@ import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import type { Config } from "./config";
+import type { Config, ConfigProvider } from "./config";
 import type { LoggerLike } from "./logger";
 import { Metrics } from "./metrics";
 import { ScriptExecutionError, ScriptRunner } from "./script-runner";
@@ -97,7 +97,7 @@ echo "recovered"
 		);
 		const logs: CapturedLog[] = [];
 		const runner = new ScriptRunner(
-			createConfig(scriptPath),
+			createConfigProvider(createConfig(scriptPath)),
 			createLogger(logs),
 			new Metrics(),
 			async () => undefined,
@@ -120,7 +120,7 @@ sleep 1
 `,
 		);
 		const runner = new ScriptRunner(
-			createConfig(scriptPath),
+			createConfigProvider(createConfig(scriptPath)),
 			createLogger([]),
 			new Metrics(),
 			async () => undefined,
@@ -147,7 +147,7 @@ exit 1
 		);
 		const logs: CapturedLog[] = [];
 		const runner = new ScriptRunner(
-			createConfig(scriptPath),
+			createConfigProvider(createConfig(scriptPath)),
 			createLogger(logs),
 			new Metrics(),
 			async () => undefined,
@@ -163,4 +163,8 @@ exit 1
 
 		expect(details?.stderr).toContain("[truncated");
 	});
+});
+
+const createConfigProvider = (config: Config): ConfigProvider => ({
+	getConfig: () => config,
 });

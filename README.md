@@ -6,7 +6,10 @@
 
 This service now behaves like a production process instead of a best-effort script wrapper:
 
-- Config is validated at startup and invalid values fail fast.
+- Config is loaded from `config.toml` and validated at startup.
+- Environment variables still override TOML values.
+- The process watches the TOML file and hot reloads valid changes.
+- Invalid reloads do not replace the last known-good config.
 - Rotom API responses are schema-validated before the monitor trusts them.
 - Script execution uses `spawn()` with argv instead of a shell command string.
 - Logs are structured JSON by default.
@@ -26,6 +29,12 @@ Install dependencies:
 bun install
 ```
 
+Create a local config:
+
+```bash
+cp config.toml.example config.toml
+```
+
 Run tests:
 
 ```bash
@@ -41,58 +50,123 @@ bun run typecheck
 Start the service:
 
 ```bash
-ROTOM_API_BASE_URL="https://rotom.example.com" bun run src/index.ts
+bun run src/index.ts
+```
+
+Use a non-default config path:
+
+```bash
+ROTOM_CONFIG_PATH="./deploy/rotom-watcher.toml" bun run src/index.ts
 ```
 
 ## Configuration
 
-Required:
+`config.toml` is the canonical config source. Environment variables override file values when both are present.
 
+The default config path is `./config.toml`. You can point at a different file with `ROTOM_CONFIG_PATH`.
+
+### TOML Shape
+
+```toml
+[rotom_api]
+base_url = "https://rotom.example.com"
+fetch_timeout_ms = 30000
+
+[polling]
+check_interval_ms = 300000
+device_timeout_minutes = 10
+
+[retry]
+initial_delay_ms = 1000
+max_delay_ms = 30000
+max_retries = 3
+
+[concurrency]
+max_concurrent_jobs = 10
+
+[circuit_breaker]
+threshold = 5
+reset_ms = 60000
+
+[scripts]
+path = "../../oci.sh"
+restart_arg = "-rsc"
+update_arg = "-usc"
+timeout_ms = 300000
+restart_threshold = 2
+
+[logging]
+format = "json"
+level = "info"
+
+[metrics]
+host = "127.0.0.1"
+port = 9090
+
+[shutdown]
+grace_period_ms = 60000
+```
+
+### Environment Overrides
+
+Supported overrides:
+
+- `ROTOM_CONFIG_PATH`
 - `ROTOM_API_BASE_URL`
-  Must be a valid `http://` or `https://` base URL.
-
-Optional:
-
-- `CHECK_INTERVAL_MS`
-  Default `300000`
-- `DEVICE_TIMEOUT_MINUTES`
-  Default `10`
 - `FETCH_TIMEOUT_MS`
-  Default `30000`
-- `CIRCUIT_BREAKER_THRESHOLD`
-  Default `5`
-- `CIRCUIT_BREAKER_RESET_MS`
-  Default `60000`
-- `MAX_CONCURRENT_JOBS`
-  Default `10`
-- `MAX_RETRIES`
-  Default `3`
+- `CHECK_INTERVAL_MS`
+- `DEVICE_TIMEOUT_MINUTES`
 - `INITIAL_RETRY_DELAY_MS`
-  Default `1000`
 - `MAX_RETRY_DELAY_MS`
-  Default `30000`
-- `RESTART_THRESHOLD`
-  Default `2`
+- `MAX_RETRIES`
+- `MAX_CONCURRENT_JOBS`
+- `CIRCUIT_BREAKER_THRESHOLD`
+- `CIRCUIT_BREAKER_RESET_MS`
 - `SCRIPT_PATH`
-  Default `../../oci.sh` resolved from [`src/config.ts`](/Users/rin/GitHub/rotom-watcher/src/config.ts)
 - `SCRIPT_RESTART_ARG`
-  Default `-rsc`
 - `SCRIPT_UPDATE_ARG`
-  Default `-usc`
 - `SCRIPT_TIMEOUT_MS`
-  Default `300000`
-- `SHUTDOWN_GRACE_PERIOD_MS`
-  Default `60000`
+- `RESTART_THRESHOLD`
 - `LOG_LEVEL`
-  One of `fatal`, `error`, `warn`, `info`, `debug`, `trace`. Default `info`
 - `LOG_FORMAT`
-  `json` or `pretty`. Default `json`
 - `METRICS_HOST`
-  Default `127.0.0.1`
 - `METRICS_PORT`
-  Default `9090`
+- `SHUTDOWN_GRACE_PERIOD_MS`
 
-Invalid numeric values do not silently fall back anymore. Startup fails instead.
+Invalid values do not silently fall back anymore. Startup fails instead, and invalid reloads are rejected while the service keeps the previous valid config.
+
+## Hot Reload
+
+`rotom-watcher` watches the configured TOML file and reloads it automatically when it changes.
+
+Reload flow:
+
+1. Parse TOML
+2. Merge environment variable overrides
+3. Validate the full config
+4. If valid, atomically swap in the new config
+5. If invalid, log the error and keep the last known-good config
+
+### Live-Reloaded Settings
+
+- `polling.check_interval_ms`
+- `polling.device_timeout_minutes`
+- `rotom_api.base_url`
+- `rotom_api.fetch_timeout_ms`
+- `retry.*`
+- `concurrency.max_concurrent_jobs`
+- `circuit_breaker.*`
+- `scripts.*`
+- `logging.level`
+- `shutdown.grace_period_ms`
+
+### Restart-Required Settings
+
+- `logging.format`
+- `metrics.host`
+- `metrics.port`
+
+These values are still validated on reload, but the running process logs that a restart is required for them to fully apply.
 
 ## Observability
 
@@ -128,8 +202,10 @@ Important metrics:
 
 ## Failure Modes
 
-- Invalid config:
+- Invalid startup config:
   Process exits during startup.
+- Invalid hot reload:
+  The reload is rejected and the service keeps the previous valid config.
 - Rotom API timeout or network error:
   Poll fails, the circuit breaker moves toward `OPEN`, and the failure is counted in metrics.
 - Rotom API schema drift:
@@ -144,4 +220,4 @@ Important metrics:
 - Logs default to JSON for easier ingestion.
 - Script stdout and stderr are truncated in logs to avoid flooding output.
 - The monitor uses one-shot scheduling, so a slow poll does not overlap with the next one.
-- On shutdown, the monitor stops scheduling new work, waits for in-flight work up to the configured grace period, then closes the observability server.
+- On shutdown, the monitor stops scheduling new work, waits for in-flight work up to the configured grace period, then closes the observability server and config watcher.

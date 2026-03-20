@@ -7,12 +7,15 @@ import type {
 } from "./types";
 
 export class OriginStateTracker {
+	private restartThreshold: number;
 	private readonly states = new Map<string, OriginState>();
 
 	constructor(
-		private readonly restartThreshold: number,
+		restartThreshold: number,
 		private readonly logger?: LoggerLike,
-	) {}
+	) {
+		this.restartThreshold = restartThreshold;
+	}
 
 	clearOriginState(origin: string): void {
 		if (this.states.has(origin)) {
@@ -63,6 +66,10 @@ export class OriginStateTracker {
 			byCount,
 			totalTracked: this.states.size,
 		};
+	}
+
+	setRestartThreshold(restartThreshold: number): void {
+		this.restartThreshold = restartThreshold;
 	}
 
 	recordOfflineAttempt(

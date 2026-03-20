@@ -12,6 +12,7 @@ export interface LoggerLike {
 	debug(...args: unknown[]): void;
 	error(...args: unknown[]): void;
 	info(...args: unknown[]): void;
+	setLevel?(level: LogLevelName): void;
 	warn(...args: unknown[]): void;
 }
 
@@ -23,8 +24,8 @@ export interface CreateLoggerOptions {
 export const createLogger = ({
 	format,
 	level,
-}: CreateLoggerOptions): LoggerLike =>
-	pino({
+}: CreateLoggerOptions): LoggerLike => {
+	const logger = pino({
 		level,
 		name: "rotom-watcher",
 		transport:
@@ -39,3 +40,10 @@ export const createLogger = ({
 					}
 				: undefined,
 	});
+
+	return Object.assign(logger, {
+		setLevel(nextLevel: LogLevelName) {
+			logger.level = nextLevel;
+		},
+	});
+};

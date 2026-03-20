@@ -16,16 +16,19 @@ export interface QueueStatusObserver {
 }
 
 export class JobQueue {
+	private concurrency: number;
 	private duplicateRejectedTotal = 0;
 	private readonly inProgress = new Set<string>();
 	private readonly queued: QueueJob[] = [];
 	private readonly running = new Set<QueueJob>();
 
 	constructor(
-		private readonly concurrency: number,
+		concurrency: number,
 		private readonly logger: LoggerLike,
 		private readonly observer?: QueueStatusObserver,
-	) {}
+	) {
+		this.concurrency = concurrency;
+	}
 
 	async add(task: () => Promise<void>, origin: string): Promise<void> {
 		if (this.isInProgress(origin)) {
@@ -74,6 +77,12 @@ export class JobQueue {
 
 	isInProgress(origin: string): boolean {
 		return this.inProgress.has(origin);
+	}
+
+	setConcurrency(concurrency: number): void {
+		this.concurrency = concurrency;
+		this.notifyStatusChanged();
+		this.processQueue();
 	}
 
 	private notifyStatusChanged(): void {

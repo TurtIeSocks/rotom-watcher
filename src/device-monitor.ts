@@ -1,5 +1,5 @@
 import type { CircuitBreaker } from "./circuit-breaker";
-import type { Config } from "./config";
+import type { ConfigProvider } from "./config";
 import { evaluateDevices } from "./device-evaluation";
 import type { JobQueue } from "./job-queue";
 import type { LoggerLike } from "./logger";
@@ -11,7 +11,7 @@ import { sleep } from "./utils";
 
 export interface DeviceMonitorDependencies {
 	circuitBreaker: CircuitBreaker;
-	config: Config;
+	configProvider: ConfigProvider;
 	jobQueue: JobQueue;
 	logger: LoggerLike;
 	metrics: Metrics;
@@ -33,7 +33,8 @@ export class DeviceMonitor {
 	constructor(private readonly dependencies: DeviceMonitorDependencies) {}
 
 	start(): void {
-		const { config, logger, metrics } = this.dependencies;
+		const { logger, metrics } = this.dependencies;
+		const config = this.dependencies.configProvider.getConfig();
 
 		if (this.startRequested) {
 			logger.warn("Device monitor has already been started");
@@ -65,7 +66,7 @@ export class DeviceMonitor {
 	async checkAndRunScript(): Promise<void> {
 		const {
 			circuitBreaker,
-			config,
+			configProvider,
 			jobQueue,
 			logger,
 			metrics,
@@ -74,6 +75,7 @@ export class DeviceMonitor {
 			scriptRunner,
 			statusApiClient,
 		} = this.dependencies;
+		const config = configProvider.getConfig();
 
 		if (this.running) {
 			logger.debug("Skipping poll because a previous poll is still running");
@@ -252,7 +254,8 @@ export class DeviceMonitor {
 		signal: string,
 		exitCode: number,
 	): Promise<void> {
-		const { config, jobQueue, logger, metrics, onShutdown } = this.dependencies;
+		const { jobQueue, logger, metrics, onShutdown } = this.dependencies;
+		const config = this.dependencies.configProvider.getConfig();
 
 		logger.info(
 			{
@@ -356,7 +359,9 @@ export class DeviceMonitor {
 		await this.checkAndRunScript();
 
 		if (!this.shutdownRequested) {
-			this.scheduleNextCheck(this.dependencies.config.checkIntervalMs);
+			this.scheduleNextCheck(
+				this.dependencies.configProvider.getConfig().checkIntervalMs,
+			);
 		}
 	}
 }

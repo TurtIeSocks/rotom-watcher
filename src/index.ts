@@ -1,5 +1,5 @@
 import { CircuitBreaker } from "./circuit-breaker";
-import { createConfig } from "./config";
+import { ConfigManager, resolveConfigPath } from "./config";
 import { DeviceMonitor } from "./device-monitor";
 import { JobQueue } from "./job-queue";
 import { createLogger } from "./logger";
@@ -9,42 +9,70 @@ import { OriginStateTracker } from "./origin-state";
 import { RotomApiClient } from "./rotom-api";
 import { ScriptRunner } from "./script-runner";
 
-const config = createConfig();
-const logger = createLogger({
-	format: config.logFormat,
-	level: config.logLevel,
+const configManager = new ConfigManager({
+	configPath: resolveConfigPath(),
 });
+const initialConfig = configManager.getConfig();
+const logger = createLogger({
+	format: initialConfig.logFormat,
+	level: initialConfig.logLevel,
+});
+
+configManager.setLogger(logger);
+
 const metrics = new Metrics();
 const circuitBreaker = new CircuitBreaker(
-	config.circuitBreakerThreshold,
-	config.circuitBreakerResetMs,
+	initialConfig.circuitBreakerThreshold,
+	initialConfig.circuitBreakerResetMs,
 	logger,
 );
 const originStateTracker = new OriginStateTracker(
-	config.restartThreshold,
+	initialConfig.restartThreshold,
 	logger,
 );
-const jobQueue = new JobQueue(config.maxConcurrentJobs, logger, metrics);
-const scriptRunner = new ScriptRunner(config, logger, metrics);
-const statusApiClient = new RotomApiClient(
-	config.rotomApiBaseUrl,
-	config.fetchTimeoutMs,
-	metrics,
-);
+const jobQueue = new JobQueue(initialConfig.maxConcurrentJobs, logger, metrics);
+const scriptRunner = new ScriptRunner(configManager, logger, metrics);
+const statusApiClient = new RotomApiClient(configManager, metrics);
 const observabilityServer = new ObservabilityServer(
-	config.metricsHost,
-	config.metricsPort,
+	initialConfig.metricsHost,
+	initialConfig.metricsPort,
 	logger,
 	metrics,
 );
 
+configManager.subscribe(({ changedKeys, config }) => {
+	if (changedKeys.includes("logLevel")) {
+		logger.setLevel?.(config.logLevel);
+	}
+
+	if (
+		changedKeys.includes("circuitBreakerThreshold") ||
+		changedKeys.includes("circuitBreakerResetMs")
+	) {
+		circuitBreaker.updateConfig(
+			config.circuitBreakerThreshold,
+			config.circuitBreakerResetMs,
+		);
+	}
+
+	if (changedKeys.includes("maxConcurrentJobs")) {
+		jobQueue.setConcurrency(config.maxConcurrentJobs);
+		metrics.updateQueueStatus(jobQueue.getStatus());
+	}
+
+	if (changedKeys.includes("restartThreshold")) {
+		originStateTracker.setRestartThreshold(config.restartThreshold);
+	}
+});
+
 const monitor = new DeviceMonitor({
 	circuitBreaker,
-	config,
+	configProvider: configManager,
 	jobQueue,
 	logger,
 	metrics,
 	onShutdown: async () => {
+		configManager.close();
 		observabilityServer.stop();
 	},
 	originStateTracker,
@@ -53,4 +81,5 @@ const monitor = new DeviceMonitor({
 });
 
 observabilityServer.start();
+configManager.startWatching();
 monitor.start();

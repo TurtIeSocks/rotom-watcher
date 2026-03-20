@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { CircuitBreaker } from "./circuit-breaker";
-import type { Config } from "./config";
+import type { Config, ConfigProvider } from "./config";
 import { DeviceMonitor } from "./device-monitor";
 import { JobQueue } from "./job-queue";
 import type { LoggerLike } from "./logger";
@@ -79,7 +79,7 @@ class TestStatusApiClient extends RotomApiClient {
 		private readonly response: StatusResponse,
 		private readonly deletedDeviceIds: string[],
 	) {
-		super("https://example.com", 1_000);
+		super(createConfigProvider(config));
 	}
 
 	override async fetchStatus(): Promise<StatusResponse> {
@@ -97,7 +97,7 @@ class TestScriptRunner extends ScriptRunner {
 	readonly executed: Array<{ origin: string; scriptMode: ScriptMode }> = [];
 
 	constructor() {
-		super(config, logger, new Metrics());
+		super(createConfigProvider(config), logger, new Metrics());
 	}
 
 	override async execute(
@@ -117,7 +117,7 @@ describe("DeviceMonitor", () => {
 		const scriptRunner = new TestScriptRunner();
 		const monitor = new DeviceMonitor({
 			circuitBreaker: new CircuitBreaker(5, 60_000, logger, () => 60_000),
-			config,
+			configProvider: createConfigProvider(config),
 			jobQueue: new JobQueue(2, logger),
 			logger,
 			metrics: new Metrics(),
@@ -168,7 +168,7 @@ describe("DeviceMonitor", () => {
 				logger,
 				() => 15 * 60 * 1_000,
 			),
-			config,
+			configProvider: createConfigProvider(config),
 			jobQueue: new JobQueue(2, logger),
 			logger,
 			metrics: new Metrics(),
@@ -230,7 +230,7 @@ describe("DeviceMonitor", () => {
 		circuitBreaker.recordFailure();
 		const monitor = new DeviceMonitor({
 			circuitBreaker,
-			config,
+			configProvider: createConfigProvider(config),
 			jobQueue: new JobQueue(2, logger),
 			logger,
 			metrics: new Metrics(),
@@ -268,7 +268,7 @@ describe("DeviceMonitor", () => {
 
 		const monitor = new DeviceMonitor({
 			circuitBreaker: new CircuitBreaker(5, 60_000, logger, () => 0),
-			config,
+			configProvider: createConfigProvider(config),
 			jobQueue: new JobQueue(2, logger),
 			logger,
 			metrics: new Metrics(),
@@ -298,7 +298,7 @@ describe("DeviceMonitor", () => {
 
 		const monitor = new DeviceMonitor({
 			circuitBreaker: new CircuitBreaker(5, 60_000, logger, () => 0),
-			config,
+			configProvider: createConfigProvider(config),
 			jobQueue: new JobQueue(2, logger),
 			logger,
 			metrics: new Metrics(),
@@ -319,4 +319,8 @@ describe("DeviceMonitor", () => {
 
 		expect(scheduledCallbacks).toHaveLength(1);
 	});
+});
+
+const createConfigProvider = (nextConfig: Config): ConfigProvider => ({
+	getConfig: () => nextConfig,
 });

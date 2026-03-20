@@ -2,39 +2,68 @@ import { describe, expect, test } from "bun:test";
 
 import { createConfig } from "./config";
 
-type ConfigFactory = (env: Record<string, string | undefined>) => unknown;
+type ConfigFactory = (options?: {
+	env?: Record<string, string | undefined>;
+	fileConfig?: unknown;
+}) => unknown;
 
-const createConfigFromEnv = createConfig as unknown as ConfigFactory;
+const createConfigFromSources = createConfig as unknown as ConfigFactory;
 
 describe("createConfig", () => {
-	test("requires ROTOM_API_BASE_URL", () => {
-		expect(() => createConfigFromEnv({})).toThrow(/ROTOM_API_BASE_URL/);
+	test("requires rotom_api.base_url when it is missing from both file config and env", () => {
+		expect(() =>
+			createConfigFromSources({
+				env: {},
+				fileConfig: {},
+			}),
+		).toThrow(/ROTOM_API_BASE_URL|rotom_api/i);
 	});
 
-	test("rejects malformed URLs", () => {
+	test("rejects malformed URLs from file config", () => {
 		expect(() =>
-			createConfigFromEnv({
-				ROTOM_API_BASE_URL: "definitely-not-a-url",
+			createConfigFromSources({
+				env: {},
+				fileConfig: {
+					rotom_api: {
+						base_url: "definitely-not-a-url",
+					},
+				},
 			}),
 		).toThrow(/URL/);
 	});
 
 	test("rejects invalid numeric settings instead of silently falling back", () => {
 		expect(() =>
-			createConfigFromEnv({
-				MAX_CONCURRENT_JOBS: "0",
-				ROTOM_API_BASE_URL: "https://example.com",
+			createConfigFromSources({
+				env: {},
+				fileConfig: {
+					concurrency: {
+						max_concurrent_jobs: 0,
+					},
+					rotom_api: {
+						base_url: "https://example.com",
+					},
+				},
 			}),
-		).toThrow(/MAX_CONCURRENT_JOBS/);
+		).toThrow(/MAX_CONCURRENT_JOBS|max_concurrent_jobs/i);
 	});
 
-	test("parses observability settings and validated API config", () => {
-		const config = createConfigFromEnv({
-			LOG_FORMAT: "pretty",
-			LOG_LEVEL: "debug",
-			METRICS_HOST: "0.0.0.0",
-			METRICS_PORT: "9100",
-			ROTOM_API_BASE_URL: "https://example.com",
+	test("parses validated values from file config", () => {
+		const config = createConfigFromSources({
+			env: {},
+			fileConfig: {
+				logging: {
+					format: "pretty",
+					level: "debug",
+				},
+				metrics: {
+					host: "0.0.0.0",
+					port: 9_100,
+				},
+				rotom_api: {
+					base_url: "https://example.com",
+				},
+			},
 		}) as {
 			logFormat: string;
 			logLevel: string;
@@ -49,6 +78,31 @@ describe("createConfig", () => {
 			metricsHost: "0.0.0.0",
 			metricsPort: 9_100,
 			rotomApiBaseUrl: "https://example.com/",
+		});
+	});
+
+	test("prefers environment variables over TOML values", () => {
+		const config = createConfigFromSources({
+			env: {
+				LOG_LEVEL: "trace",
+				ROTOM_API_BASE_URL: "https://env.example.com",
+			},
+			fileConfig: {
+				logging: {
+					level: "debug",
+				},
+				rotom_api: {
+					base_url: "https://file.example.com",
+				},
+			},
+		}) as {
+			logLevel: string;
+			rotomApiBaseUrl: string;
+		};
+
+		expect(config).toMatchObject({
+			logLevel: "trace",
+			rotomApiBaseUrl: "https://env.example.com/",
 		});
 	});
 });

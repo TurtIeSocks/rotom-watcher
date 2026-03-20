@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import type { ConfigProvider } from "./config";
 import type { Metrics } from "./metrics";
 import type { StatusResponse } from "./types";
 import { fetchWithTimeout } from "./utils";
@@ -55,27 +56,23 @@ export class RotomApiError extends Error {
 }
 
 export class RotomApiClient {
-	private readonly baseUrl: URL;
-
 	constructor(
-		baseUrl: string,
-		private readonly timeoutMs: number,
+		private readonly configProvider: ConfigProvider,
 		private readonly metrics?: Metrics,
 		private readonly fetchImplementation: typeof fetch = fetch,
-	) {
-		this.baseUrl = new URL(baseUrl);
-	}
+	) {}
 
 	async deleteDevice(deviceId: string): Promise<boolean> {
 		const startTime = Date.now();
+		const config = this.configProvider.getConfig();
 
 		try {
 			const response = await fetchWithTimeout(
 				new URL(
 					`/api/device/${encodeURIComponent(deviceId)}/action/delete`,
-					this.baseUrl,
+					config.rotomApiBaseUrl,
 				).toString(),
-				this.timeoutMs,
+				config.fetchTimeoutMs,
 				this.fetchImplementation,
 			);
 			const durationMs = Date.now() - startTime;
@@ -108,11 +105,12 @@ export class RotomApiClient {
 
 	async fetchStatus(): Promise<StatusResponse> {
 		const startTime = Date.now();
+		const config = this.configProvider.getConfig();
 
 		try {
 			const response = await fetchWithTimeout(
-				new URL("/api/status", this.baseUrl).toString(),
-				this.timeoutMs,
+				new URL("/api/status", config.rotomApiBaseUrl).toString(),
+				config.fetchTimeoutMs,
 				this.fetchImplementation,
 			);
 
