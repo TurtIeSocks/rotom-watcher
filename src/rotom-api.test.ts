@@ -27,6 +27,76 @@ describe("RotomApiClient", () => {
 		});
 	});
 
+	test("accepts the richer status payload defined by StatusResponse", async () => {
+		const payload = {
+			devices: [
+				{
+					dateConnected: 1,
+					dateLastMessageReceived: 2,
+					dateLastMessageSent: 3,
+					deviceId: "device-1",
+					heartbeatCheckStatus: true,
+					init: true,
+					instanceNo: 4,
+					isAlive: true,
+					lastMemory: {
+						memFree: 5,
+						memMitm: 6,
+						memStart: 7,
+					},
+					nextId: 8,
+					noMessagesReceived: 9,
+					noMessagesSent: 10,
+					origin: "alpha",
+					publicIp: "127.0.0.1",
+					version: "1.0.0",
+				},
+			],
+			workers: [
+				{
+					controller: {
+						dateLastMessageSent: 11,
+						heartbeatCheckStatus: true,
+						instanceNo: 12,
+						isAlive: true,
+						loginListener: 13,
+						origin: "alpha",
+						workerId: "worker-1",
+						workerName: "worker-name",
+					},
+					deviceId: "device-1",
+					isAllocated: true,
+					worker: {
+						dateLastMessageReceived: 14,
+						dateLastMessageSent: 15,
+						deviceId: "device-1",
+						heartbeatCheckStatus: true,
+						init: true,
+						instanceNo: 16,
+						isAlive: true,
+						noMessagesReceived: 17,
+						noMessagesSent: 18,
+						origin: "alpha",
+						traceMessages: false,
+						userAgent: "rotom-worker",
+						version: "1.0.0",
+						workerId: "worker-1",
+					},
+					workerId: "worker-1",
+				},
+			],
+		};
+
+		globalThis.fetch = (async () =>
+			Response.json(payload)) as unknown as typeof fetch;
+
+		const client = new RotomApiClient(
+			createConfigProvider("https://example.com", 1_000),
+		);
+
+		await expect(client.fetchStatus()).resolves.toEqual(payload);
+	});
+
 	test("classifies non-2xx responses", async () => {
 		globalThis.fetch = (async () =>
 			new Response("nope", {

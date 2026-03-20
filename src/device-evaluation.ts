@@ -1,15 +1,15 @@
 import type {
-	ConnectionInfo,
+	Device,
 	DeviceEvaluationResult,
 	OriginDecision,
-	StatusWorker,
+	Worker,
 } from "./types";
 
 export interface EvaluateDevicesOptions {
 	currentTimeMs: number;
 	deviceTimeoutMinutes: number;
-	devices: ConnectionInfo[];
-	workers: StatusWorker[];
+	devices: Device[];
+	workers: Worker[];
 }
 
 export const evaluateDevices = ({
@@ -18,7 +18,7 @@ export const evaluateDevices = ({
 	devices,
 	workers,
 }: EvaluateDevicesOptions): DeviceEvaluationResult => {
-	const devicesByOrigin = devices.reduce<Map<string, ConnectionInfo[]>>(
+	const devicesByOrigin = devices.reduce<Map<string, Device[]>>(
 		(accumulator, device) => {
 			const originDevices = accumulator.get(device.origin) ?? [];
 			originDevices.push(device);

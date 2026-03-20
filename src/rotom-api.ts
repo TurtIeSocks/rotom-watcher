@@ -5,36 +5,63 @@ import type { Metrics } from "./metrics";
 import type { StatusResponse } from "./types";
 import { fetchWithTimeout } from "./utils";
 
-const memoryInfoSchema = z.object({
+const lastMemorySchema = z.object({
 	memFree: z.number(),
 	memMitm: z.number(),
 	memStart: z.number(),
 });
 
-const connectionInfoSchema = z.object({
-	dateConnected: z.number(),
+const baseStatusSchema = z.object({
 	dateLastMessageReceived: z.number(),
 	dateLastMessageSent: z.number(),
-	deviceId: z.string(),
+	heartbeatCheckStatus: z.boolean(),
 	init: z.boolean(),
 	instanceNo: z.number(),
 	isAlive: z.boolean(),
-	lastMemory: memoryInfoSchema,
-	nextId: z.number(),
 	noMessagesReceived: z.number(),
 	noMessagesSent: z.number(),
 	origin: z.string(),
+});
+
+const deviceSchema = baseStatusSchema.extend({
+	dateConnected: z.number(),
+	deviceId: z.string(),
+	lastMemory: lastMemorySchema,
+	nextId: z.number(),
 	publicIp: z.string(),
 	version: z.number(),
 });
 
+const controllerSchema = z.object({
+	dateLastMessageSent: z.number(),
+	heartbeatCheckStatus: z.boolean(),
+	instanceNo: z.number(),
+	isAlive: z.boolean(),
+	loginListener: z.number(),
+	origin: z.string(),
+	workerId: z.string(),
+	workerName: z.string(),
+});
+
+const workerStatusSchema = baseStatusSchema.extend({
+	deviceId: z.string(),
+	traceMessages: z.boolean(),
+	userAgent: z.string(),
+	workerId: z.string(),
+	version: z.string(),
+});
+
+const workerSchema = z.object({
+	controller: controllerSchema.optional(),
+	deviceId: z.string(),
+	isAllocated: z.boolean(),
+	worker: workerStatusSchema,
+	workerId: z.string(),
+});
+
 const statusResponseSchema = z.object({
-	devices: z.array(connectionInfoSchema),
-	workers: z.array(
-		z.object({
-			worker: connectionInfoSchema,
-		}),
-	),
+	devices: z.array(deviceSchema),
+	workers: z.array(workerSchema),
 });
 
 export type RotomApiErrorCode =

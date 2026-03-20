@@ -8,15 +8,14 @@ import { Metrics } from "./metrics";
 import { OriginStateTracker } from "./origin-state";
 import { RotomApiClient } from "./rotom-api";
 import { ScriptRunner } from "./script-runner";
-import type { ConnectionInfo, ScriptMode, StatusResponse } from "./types";
+import type { Device, ScriptMode, StatusResponse, Worker } from "./types";
 
-const buildDevice = (
-	overrides: Partial<ConnectionInfo> = {},
-): ConnectionInfo => ({
+const buildDevice = (overrides: Partial<Device> = {}): Device => ({
 	dateConnected: 0,
 	dateLastMessageReceived: 0,
 	dateLastMessageSent: 0,
 	deviceId: "device-1",
+	heartbeatCheckStatus: true,
 	init: true,
 	instanceNo: 1,
 	isAlive: true,
@@ -30,8 +29,30 @@ const buildDevice = (
 	noMessagesSent: 0,
 	origin: "alpha",
 	publicIp: "127.0.0.1",
-	version: 1,
+	version: "1.0.0",
 	...overrides,
+});
+
+const buildWorker = (origin: string): Worker => ({
+	deviceId: `${origin}-device`,
+	isAllocated: true,
+	worker: {
+		dateLastMessageReceived: 0,
+		dateLastMessageSent: 0,
+		deviceId: `${origin}-device`,
+		heartbeatCheckStatus: true,
+		init: true,
+		instanceNo: 1,
+		isAlive: true,
+		noMessagesReceived: 0,
+		noMessagesSent: 0,
+		origin,
+		traceMessages: false,
+		userAgent: "rotom-worker",
+		version: "1.0.0",
+		workerId: `${origin}-worker`,
+	},
+	workerId: `${origin}-worker`,
 });
 
 const config: Config = {
@@ -150,14 +171,7 @@ describe("DeviceMonitor", () => {
 							isAlive: true,
 						}),
 					],
-					workers: [
-						{
-							worker: buildDevice({
-								deviceId: "alpha-worker",
-								origin: "alpha",
-							}),
-						},
-					],
+					workers: [buildWorker("alpha")],
 				},
 				deletedDeviceIds,
 			),
@@ -201,14 +215,7 @@ describe("DeviceMonitor", () => {
 							isAlive: false,
 						}),
 					],
-					workers: [
-						{
-							worker: buildDevice({
-								deviceId: "alpha-worker",
-								origin: "alpha",
-							}),
-						},
-					],
+					workers: [buildWorker("alpha")],
 				},
 				deletedDeviceIds,
 			),
