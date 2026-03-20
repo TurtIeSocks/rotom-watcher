@@ -5,8 +5,8 @@ import { JobQueue } from "./job-queue";
 import { Logger } from "./logger";
 import { Metrics } from "./metrics";
 import { OriginStateTracker } from "./origin-state";
+import { RotomApiClient } from "./rotom-api";
 import { ScriptRunner } from "./script-runner";
-import { StatusApiClient } from "./status-api";
 
 const config = createConfig();
 const logger = new Logger(process.env.LOG_LEVEL || "INFO");
@@ -24,7 +24,7 @@ const originStateTracker = new OriginStateTracker(
 );
 const jobQueue = new JobQueue(config.maxConcurrentJobs, logger);
 const scriptRunner = new ScriptRunner(config, logger, metrics);
-const statusApiClient = new StatusApiClient(
+const statusApiClient = new RotomApiClient(
 	config.endpoint,
 	config.fetchTimeoutMs,
 );

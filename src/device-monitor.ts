@@ -5,8 +5,8 @@ import type { JobQueue } from "./job-queue";
 import type { LoggerLike } from "./logger";
 import type { Metrics } from "./metrics";
 import type { OriginStateTracker } from "./origin-state";
+import type { RotomApiClient } from "./rotom-api";
 import type { ScriptRunner } from "./script-runner";
-import type { StatusApiClient } from "./status-api";
 import { sleep } from "./utils";
 
 export interface DeviceMonitorDependencies {
@@ -18,7 +18,7 @@ export interface DeviceMonitorDependencies {
 	now?: () => number;
 	originStateTracker: OriginStateTracker;
 	scriptRunner: ScriptRunner;
-	statusApiClient: StatusApiClient;
+	statusApiClient: RotomApiClient;
 }
 
 export class DeviceMonitor {
@@ -104,7 +104,7 @@ export class DeviceMonitor {
 					`Queuing ${devicesToProcess.length} device(s) for script execution`,
 				);
 
-				const jobs = devicesToProcess.map((device) => {
+				const jobs = devicesToProcess.map(async (device) => {
 					const state = originStateTracker.recordOfflineAttempt(device.origin);
 					const args = originStateTracker.getScriptArgs(device.origin);
 

@@ -1,7 +1,7 @@
 import type { StatusResponse } from "./types";
 import { fetchWithTimeout } from "./utils";
 
-export class StatusApiClient {
+export class RotomApiClient {
 	constructor(
 		private readonly endpoint: string,
 		private readonly timeoutMs: number,
@@ -18,5 +18,18 @@ export class StatusApiClient {
 		}
 
 		return (await response.json()) as StatusResponse;
+	}
+
+	async deleteDevice(deviceId: string): Promise<boolean> {
+		const response = await fetchWithTimeout(
+			`http://${this.endpoint}/api/device/${deviceId}/action/delete`,
+			this.timeoutMs,
+		);
+
+		if (!response.ok) {
+			return false;
+		}
+
+		return true;
 	}
 }
