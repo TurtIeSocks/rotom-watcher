@@ -4,13 +4,27 @@ export const sanitizeOrigin = (origin: string): string =>
 export const sleep = (ms: number): Promise<void> =>
 	new Promise((resolve) => setTimeout(resolve, ms));
 
+export const truncateOutput = (value: string, maxLength = 4_000): string => {
+	if (value.length <= maxLength) {
+		return value;
+	}
+
+	return `${value.slice(0, maxLength)}...[truncated ${value.length - maxLength} chars]`;
+};
+
 export const calculateRetryDelay = (
 	attempt: number,
 	initialRetryDelayMs: number,
 	maxRetryDelayMs: number,
+	jitterRatio = 0.2,
+	random = Math.random,
 ): number => {
-	const delay = initialRetryDelayMs * 2 ** attempt;
-	return Math.min(delay, maxRetryDelayMs);
+	const exponentialDelay = initialRetryDelayMs * 2 ** attempt;
+	const cappedDelay = Math.min(exponentialDelay, maxRetryDelayMs);
+	const jitterWindow = cappedDelay * jitterRatio;
+	const jitter = random() * jitterWindow * 2 - jitterWindow;
+
+	return Math.max(0, Math.round(cappedDelay + jitter));
 };
 
 export const fetchWithTimeout = async (

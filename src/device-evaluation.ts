@@ -1,6 +1,7 @@
 import type {
 	ConnectionInfo,
 	DeviceEvaluationResult,
+	OriginDecision,
 	StatusWorker,
 } from "./types";
 
@@ -17,42 +18,63 @@ export const evaluateDevices = ({
 	devices,
 	workers,
 }: EvaluateDevicesOptions): DeviceEvaluationResult => {
-	const deviceAliveMap = devices.reduce<Record<string, boolean>>(
-		(acc, device) => {
-			if (!(device.origin in acc)) {
-				acc[device.origin] = device.isAlive;
-			}
-
-			return acc;
+	const devicesByOrigin = devices.reduce<Map<string, ConnectionInfo[]>>(
+		(accumulator, device) => {
+			const originDevices = accumulator.get(device.origin) ?? [];
+			originDevices.push(device);
+			accumulator.set(device.origin, originDevices);
+			return accumulator;
 		},
-		{},
+		new Map(),
 	);
+	const workerOrigins = new Set(workers.map((worker) => worker.worker.origin));
 
 	const onlineOrigins: string[] = [];
-	const devicesToProcess: DeviceEvaluationResult["devicesToProcess"] = [];
+	const originDecisions: OriginDecision[] = [];
 
-	for (const device of devices) {
-		const hasWorkers = workers.some(
-			(worker) => worker.worker.origin === device.origin,
+	for (const [origin, originDevices] of devicesByOrigin.entries()) {
+		const hasWorkers = workerOrigins.has(origin);
+		const hasAliveDevice = originDevices.some((device) => device.isAlive);
+		const latestMessageReceived = originDevices.reduce(
+			(latest, device) => Math.max(latest, device.dateLastMessageReceived),
+			Number.NEGATIVE_INFINITY,
 		);
+		const lastSeenMinutes =
+			(currentTimeMs - latestMessageReceived) / (1000 * 60);
+		const originIsOnline = hasWorkers && hasAliveDevice;
+		const deadDuplicatesToDelete = originIsOnline
+			? originDevices
+					.filter((device) => !device.isAlive)
+					.map((device) => ({
+						deviceId: device.deviceId,
+						origin,
+					}))
+			: [];
+		const shouldProcess =
+			!originIsOnline &&
+			(!hasWorkers || lastSeenMinutes > deviceTimeoutMinutes);
 
-		if (!deviceAliveMap[device.origin] || !hasWorkers) {
-			const timeDifferenceMinutes =
-				(currentTimeMs - device.dateLastMessageReceived) / (1000 * 60);
-
-			if (timeDifferenceMinutes > deviceTimeoutMinutes || !hasWorkers) {
-				devicesToProcess.push({
-					origin: device.origin,
-					timeDifference: timeDifferenceMinutes.toFixed(2),
-				});
-			}
-		} else {
-			onlineOrigins.push(device.origin);
+		if (originIsOnline) {
+			onlineOrigins.push(origin);
 		}
+
+		originDecisions.push({
+			deadDuplicatesToDelete,
+			hasAliveDevice,
+			hasWorkers,
+			lastSeenMinutes,
+			origin,
+			shouldProcess,
+		});
 	}
 
+	originDecisions.sort((left, right) =>
+		left.origin.localeCompare(right.origin),
+	);
+	onlineOrigins.sort((left, right) => left.localeCompare(right));
+
 	return {
-		devicesToProcess,
 		onlineOrigins,
+		originDecisions,
 	};
 };

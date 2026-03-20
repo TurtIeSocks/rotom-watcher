@@ -1,6 +1,6 @@
 import type { LoggerLike } from "./logger";
 
-type CircuitBreakerState = "CLOSED" | "HALF_OPEN" | "OPEN";
+export type CircuitBreakerState = "CLOSED" | "HALF_OPEN" | "OPEN";
 
 export class CircuitBreaker {
 	private failures = 0;
@@ -30,6 +30,14 @@ export class CircuitBreaker {
 		return false;
 	}
 
+	getFailureCount(): number {
+		return this.failures;
+	}
+
+	getState(): CircuitBreakerState {
+		return this.state;
+	}
+
 	recordFailure(): void {
 		this.failures++;
 
@@ -37,13 +45,23 @@ export class CircuitBreaker {
 			this.state = "OPEN";
 			this.nextAttempt = this.now() + this.resetTimeMs;
 			this.logger.warn(
-				`Circuit breaker opened after ${this.failures} failures. Will retry after ${this.resetTimeMs}ms`,
+				{
+					failures: this.failures,
+					nextAttempt: this.nextAttempt,
+					resetTimeMs: this.resetTimeMs,
+				},
+				"Circuit breaker opened",
 			);
 		}
 	}
 
 	recordSuccess(): void {
+		const recoveredFrom = this.state;
 		this.failures = 0;
 		this.state = "CLOSED";
+
+		if (recoveredFrom !== "CLOSED") {
+			this.logger.info("Circuit breaker returned to CLOSED state");
+		}
 	}
 }

@@ -40,12 +40,29 @@ export interface OriginStateStats {
 	totalTracked: number;
 }
 
-export interface DeviceToProcess {
+export interface DeviceToDelete {
+	deviceId: string;
 	origin: string;
-	timeDifference: string;
+}
+
+export interface OriginDecision {
+	deadDuplicatesToDelete: DeviceToDelete[];
+	hasAliveDevice: boolean;
+	hasWorkers: boolean;
+	lastSeenMinutes: number;
+	origin: string;
+	shouldProcess: boolean;
 }
 
 export interface DeviceEvaluationResult {
-	devicesToProcess: DeviceToProcess[];
 	onlineOrigins: string[];
+	originDecisions: OriginDecision[];
+}
+
+export type ScriptMode = "restart" | "update";
+
+export interface OfflineAttemptResult {
+	origin: string;
+	scriptMode: ScriptMode;
+	state: OriginState;
 }

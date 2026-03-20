@@ -3,11 +3,20 @@ import type { LoggerLike } from "./logger";
 type QueueJob = () => Promise<void>;
 
 export interface QueueStatus {
+	activeOrigins: string[];
+	capacity: number;
+	duplicateRejectedTotal: number;
 	queued: number;
 	running: number;
+	saturated: boolean;
+}
+
+export interface QueueStatusObserver {
+	updateQueueStatus(status: QueueStatus): void;
 }
 
 export class JobQueue {
+	private duplicateRejectedTotal = 0;
 	private readonly inProgress = new Set<string>();
 	private readonly queued: QueueJob[] = [];
 	private readonly running = new Set<QueueJob>();
@@ -15,15 +24,19 @@ export class JobQueue {
 	constructor(
 		private readonly concurrency: number,
 		private readonly logger: LoggerLike,
+		private readonly observer?: QueueStatusObserver,
 	) {}
 
 	async add(task: () => Promise<void>, origin: string): Promise<void> {
 		if (this.isInProgress(origin)) {
-			this.logger.debug(`Skipping duplicate job for ${origin}`);
+			this.duplicateRejectedTotal++;
+			this.logger.debug({ origin }, "Skipping duplicate queued job");
+			this.notifyStatusChanged();
 			return;
 		}
 
 		this.inProgress.add(origin);
+		this.notifyStatusChanged();
 
 		return new Promise((resolve, reject) => {
 			const job: QueueJob = async () => {
@@ -35,24 +48,36 @@ export class JobQueue {
 				} finally {
 					this.inProgress.delete(origin);
 					this.running.delete(job);
+					this.notifyStatusChanged();
 					this.processQueue();
 				}
 			};
 
 			this.queued.push(job);
+			this.notifyStatusChanged();
 			this.processQueue();
 		});
 	}
 
 	getStatus(): QueueStatus {
 		return {
+			activeOrigins: [...this.inProgress].sort((left, right) =>
+				left.localeCompare(right),
+			),
+			capacity: this.concurrency,
+			duplicateRejectedTotal: this.duplicateRejectedTotal,
 			queued: this.queued.length,
 			running: this.running.size,
+			saturated: this.running.size >= this.concurrency,
 		};
 	}
 
 	isInProgress(origin: string): boolean {
 		return this.inProgress.has(origin);
+	}
+
+	private notifyStatusChanged(): void {
+		this.observer?.updateQueueStatus(this.getStatus());
 	}
 
 	private processQueue(): void {
@@ -63,6 +88,7 @@ export class JobQueue {
 			}
 
 			this.running.add(job);
+			this.notifyStatusChanged();
 			void job();
 		}
 	}

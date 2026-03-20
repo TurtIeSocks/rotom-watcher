@@ -16,42 +16,50 @@ export interface DeviceMonitorDependencies {
 	logger: LoggerLike;
 	metrics: Metrics;
 	now?: () => number;
+	onShutdown?: (signal: string) => Promise<void> | void;
 	originStateTracker: OriginStateTracker;
 	scriptRunner: ScriptRunner;
 	statusApiClient: RotomApiClient;
 }
 
 export class DeviceMonitor {
-	private intervalId?: ReturnType<typeof setInterval>;
+	private handlersRegistered = false;
 	private running = false;
 	private shutdownRequested = false;
+	private startRequested = false;
+	private stopPromise?: Promise<void>;
+	private timeoutId?: ReturnType<typeof setTimeout>;
 
 	constructor(private readonly dependencies: DeviceMonitorDependencies) {}
 
 	start(): void {
-		const { config, logger } = this.dependencies;
+		const { config, logger, metrics } = this.dependencies;
 
-		logger.info("=".repeat(80));
-		logger.info("Device Monitor Starting");
-		logger.info("=".repeat(80));
-		logger.info("Configuration:", JSON.stringify(config, null, 2));
-		logger.info("Endpoint:", config.endpoint);
-		logger.info("Script path:", config.scriptPath);
-		logger.info("=".repeat(80));
+		if (this.startRequested) {
+			logger.warn("Device monitor has already been started");
+			return;
+		}
+
+		this.startRequested = true;
+
+		logger.info(
+			{
+				checkIntervalMs: config.checkIntervalMs,
+				deviceTimeoutMinutes: config.deviceTimeoutMinutes,
+				metricsHost: config.metricsHost,
+				metricsPort: config.metricsPort,
+				rotomApiBaseUrl: config.rotomApiBaseUrl,
+				scriptPath: config.scriptPath,
+			},
+			"Device monitor starting",
+		);
 
 		this.registerProcessHandlers();
+		metrics.setCircuitBreakerState(this.dependencies.circuitBreaker.getState());
+		metrics.updateOriginState(this.dependencies.originStateTracker.getStats());
+		metrics.updateQueueStatus(this.dependencies.jobQueue.getStatus());
 
-		void this.checkAndRunScript().then(() => {
-			if (!this.shutdownRequested) {
-				this.intervalId = setInterval(
-					() => void this.checkAndRunScript(),
-					config.checkIntervalMs,
-				);
-				logger.info(
-					`Scheduled checks every ${config.checkIntervalMs / 1000} seconds`,
-				);
-			}
-		});
+		this.scheduleNextCheck(0);
 	}
 
 	async checkAndRunScript(): Promise<void> {
@@ -68,145 +76,287 @@ export class DeviceMonitor {
 		} = this.dependencies;
 
 		if (this.running) {
-			logger.debug("Check already running, skipping...");
+			logger.debug("Skipping poll because a previous poll is still running");
 			return;
 		}
 
 		if (!circuitBreaker.canExecute()) {
-			logger.warn("Circuit breaker is OPEN, skipping check");
+			metrics.setCircuitBreakerState(circuitBreaker.getState());
+			logger.warn("Circuit breaker is OPEN, skipping device poll");
 			return;
 		}
 
 		this.running = true;
-		const checkStartTime = now();
+		const pollStartedAt = now();
 
 		try {
-			logger.info("Starting device check...");
+			logger.info("Starting device poll");
 
 			const { devices, workers } = await statusApiClient.fetchStatus();
-
-			metrics.recordApiSuccess();
 			circuitBreaker.recordSuccess();
+			metrics.setCircuitBreakerState(circuitBreaker.getState());
 
-			logger.info(`Found ${devices.length} devices`);
-
-			const { devicesToProcess, onlineOrigins } = evaluateDevices({
+			const evaluation = evaluateDevices({
 				currentTimeMs: now(),
 				deviceTimeoutMinutes: config.deviceTimeoutMinutes,
 				devices,
 				workers,
 			});
 
-			originStateTracker.cleanupOnlineOrigins(onlineOrigins);
+			originStateTracker.cleanupOnlineOrigins(evaluation.onlineOrigins);
+			metrics.updateOriginState(originStateTracker.getStats());
 
-			if (devicesToProcess.length > 0) {
+			const duplicateDeletions = evaluation.originDecisions.flatMap(
+				(decision) => decision.deadDuplicatesToDelete,
+			);
+
+			if (duplicateDeletions.length > 0) {
 				logger.info(
-					`Queuing ${devicesToProcess.length} device(s) for script execution`,
+					{
+						count: duplicateDeletions.length,
+					},
+					"Deleting dead duplicate devices",
 				);
 
-				const jobs = devicesToProcess.map(async (device) => {
-					const state = originStateTracker.recordOfflineAttempt(device.origin);
-					const args = originStateTracker.getScriptArgs(device.origin);
+				const deletions = duplicateDeletions.map(async (device) => {
+					try {
+						const deleted = await statusApiClient.deleteDevice(device.deviceId);
 
-					logger.info(
-						`[${device.origin}] Last seen ${device.timeDifference} minutes ago, offline count: ${state.successiveOfflineCount}, using: ${args}`,
+						if (!deleted) {
+							metrics.recordDuplicateDeletion("failure");
+							logger.warn(
+								{
+									deviceId: device.deviceId,
+									origin: device.origin,
+								},
+								"Failed to delete dead duplicate device",
+							);
+							return;
+						}
+
+						metrics.recordDuplicateDeletion("success");
+						logger.info(
+							{
+								deviceId: device.deviceId,
+								origin: device.origin,
+							},
+							"Deleted dead duplicate device",
+						);
+					} catch (error: unknown) {
+						metrics.recordDuplicateDeletion("failure");
+						logger.error(
+							{
+								deviceId: device.deviceId,
+								error,
+								origin: device.origin,
+							},
+							"Error deleting dead duplicate device",
+						);
+					}
+				});
+
+				await Promise.allSettled(deletions);
+			}
+
+			const decisionsToProcess = evaluation.originDecisions.filter(
+				(decision) => decision.shouldProcess,
+			);
+
+			if (decisionsToProcess.length === 0) {
+				logger.info("No origins require script execution");
+			} else {
+				logger.info(
+					{
+						count: decisionsToProcess.length,
+					},
+					"Queueing offline origins for script execution",
+				);
+
+				const jobs = decisionsToProcess.map(async (decision) => {
+					const offlineAttempt = originStateTracker.recordOfflineAttempt(
+						decision.origin,
+						now(),
+					);
+					metrics.updateOriginState(originStateTracker.getStats());
+
+					logger.warn(
+						{
+							hasAliveDevice: decision.hasAliveDevice,
+							hasWorkers: decision.hasWorkers,
+							lastSeenMinutes: decision.lastSeenMinutes,
+							offlineCount: offlineAttempt.state.successiveOfflineCount,
+							origin: decision.origin,
+							scriptMode: offlineAttempt.scriptMode,
+						},
+						"Scheduling recovery script for offline origin",
 					);
 
 					return jobQueue
-						.add(() => scriptRunner.execute(device.origin, args), device.origin)
+						.add(
+							() =>
+								scriptRunner.execute(
+									decision.origin,
+									offlineAttempt.scriptMode,
+								),
+							decision.origin,
+						)
 						.catch((error: unknown) => {
-							const message =
-								error instanceof Error ? error.message : String(error);
 							logger.error(
-								`[${device.origin}] Final failure after all retries:`,
-								message,
+								{
+									error,
+									origin: decision.origin,
+								},
+								"Recovery script exhausted all retries",
 							);
 						});
 				});
 
 				await Promise.allSettled(jobs);
-
-				logger.info(
-					`All scripts completed. Queue status: ${JSON.stringify(jobQueue.getStatus())}`,
-				);
-			} else {
-				logger.info("No devices require script execution");
 			}
 
-			logger.info(`Check completed in ${now() - checkStartTime}ms`);
-			this.logStats();
+			metrics.recordPollSuccess(now());
+			logger.info(
+				{
+					durationMs: now() - pollStartedAt,
+					originCount: evaluation.originDecisions.length,
+				},
+				"Device poll completed",
+			);
 		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			logger.error(`Check failed: ${message}`);
-			metrics.recordApiFailure();
 			circuitBreaker.recordFailure();
+			metrics.setCircuitBreakerState(circuitBreaker.getState());
+			logger.error(
+				{
+					error,
+				},
+				"Device poll failed",
+			);
 		} finally {
+			metrics.recordPollDuration(now() - pollStartedAt);
+			metrics.updateOriginState(originStateTracker.getStats());
+			metrics.updateQueueStatus(jobQueue.getStatus());
 			this.running = false;
 		}
 	}
 
-	private logStats(): void {
-		const { logger, metrics, originStateTracker } = this.dependencies;
+	stop(signal = "manual", exitCode = 0): Promise<void> {
+		if (this.stopPromise) {
+			return this.stopPromise;
+		}
 
-		logger.info("Metrics:", JSON.stringify(metrics.getStats(), null, 2));
+		this.stopPromise = this.gracefulShutdown(signal, exitCode);
+		return this.stopPromise;
+	}
+
+	private async gracefulShutdown(
+		signal: string,
+		exitCode: number,
+	): Promise<void> {
+		const { config, jobQueue, logger, metrics, onShutdown } = this.dependencies;
+
 		logger.info(
-			"Origin State:",
-			JSON.stringify(originStateTracker.getStats(), null, 2),
+			{
+				exitCode,
+				signal,
+			},
+			"Initiating graceful shutdown",
+		);
+
+		this.shutdownRequested = true;
+		metrics.markShutdownRequested();
+		process.exitCode = exitCode;
+
+		if (this.timeoutId) {
+			clearTimeout(this.timeoutId);
+			this.timeoutId = undefined;
+		}
+
+		const shutdownDeadline = Date.now() + config.shutdownGracePeriodMs;
+
+		while (this.running && Date.now() < shutdownDeadline) {
+			await sleep(250);
+		}
+
+		while (jobQueue.getStatus().running > 0 && Date.now() < shutdownDeadline) {
+			await sleep(250);
+		}
+
+		if (onShutdown) {
+			try {
+				await onShutdown(signal);
+			} catch (error) {
+				logger.error(
+					{
+						error,
+						signal,
+					},
+					"Shutdown hook failed",
+				);
+			}
+		}
+
+		logger.info(
+			{
+				queueStatus: jobQueue.getStatus(),
+			},
+			"Graceful shutdown completed",
 		);
 	}
 
 	private registerProcessHandlers(): void {
 		const { logger } = this.dependencies;
 
-		process.on("SIGINT", () => {
-			void this.gracefulShutdown("SIGINT");
+		if (this.handlersRegistered) {
+			return;
+		}
+
+		this.handlersRegistered = true;
+
+		process.once("SIGINT", () => {
+			void this.stop("SIGINT", 0);
 		});
 
-		process.on("SIGTERM", () => {
-			void this.gracefulShutdown("SIGTERM");
+		process.once("SIGTERM", () => {
+			void this.stop("SIGTERM", 0);
 		});
 
-		process.on("uncaughtException", (error) => {
-			logger.error("Uncaught exception:", error);
-			void this.gracefulShutdown("uncaughtException");
+		process.once("uncaughtException", (error) => {
+			logger.error(
+				{
+					error,
+				},
+				"Uncaught exception",
+			);
+			void this.stop("uncaughtException", 1);
 		});
 
-		process.on("unhandledRejection", (reason, promise) => {
-			logger.error("Unhandled rejection at:", promise, "reason:", reason);
+		process.once("unhandledRejection", (reason) => {
+			logger.error(
+				{
+					reason,
+				},
+				"Unhandled promise rejection",
+			);
+			void this.stop("unhandledRejection", 1);
 		});
 	}
 
-	private async gracefulShutdown(signal: string): Promise<void> {
-		const { jobQueue, logger } = this.dependencies;
-
-		logger.info(`Received ${signal}, initiating graceful shutdown...`);
-		this.shutdownRequested = true;
-
-		if (this.intervalId) {
-			clearInterval(this.intervalId);
+	private scheduleNextCheck(delayMs: number): void {
+		if (this.shutdownRequested) {
+			return;
 		}
 
-		let waitCount = 0;
-		while (this.running && waitCount < 60) {
-			logger.info("Waiting for current check to complete...");
-			await sleep(1_000);
-			waitCount++;
+		this.timeoutId = setTimeout(() => {
+			this.timeoutId = undefined;
+			void this.runScheduledCheck();
+		}, delayMs);
+	}
+
+	private async runScheduledCheck(): Promise<void> {
+		await this.checkAndRunScript();
+
+		if (!this.shutdownRequested) {
+			this.scheduleNextCheck(this.dependencies.config.checkIntervalMs);
 		}
-
-		waitCount = 0;
-		while (jobQueue.getStatus().running > 0 && waitCount < 60) {
-			const status = jobQueue.getStatus();
-			logger.info(
-				`Waiting for ${status.running} running job(s) to complete...`,
-			);
-			await sleep(1_000);
-			waitCount++;
-		}
-
-		logger.info("Final metrics:");
-		this.logStats();
-
-		logger.info("Shutdown complete");
-		process.exit(0);
 	}
 }

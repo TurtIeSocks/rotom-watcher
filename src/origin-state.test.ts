@@ -6,17 +6,17 @@ describe("OriginStateTracker", () => {
 	test("starts with restart for newly offline origins", () => {
 		const tracker = new OriginStateTracker(2);
 
-		expect(tracker.getScriptArgs("alpha")).toBe("-rsc");
+		expect(tracker.getScriptMode("alpha")).toBe("restart");
 	});
 
 	test("switches to update after the restart threshold is reached", () => {
 		const tracker = new OriginStateTracker(2);
 
 		tracker.recordOfflineAttempt("alpha", 1_000);
-		expect(tracker.getScriptArgs("alpha")).toBe("-rsc");
+		expect(tracker.getScriptMode("alpha")).toBe("restart");
 
 		tracker.recordOfflineAttempt("alpha", 2_000);
-		expect(tracker.getScriptArgs("alpha")).toBe("-usc");
+		expect(tracker.getScriptMode("alpha")).toBe("update");
 	});
 
 	test("clears tracked state when an origin comes back online", () => {

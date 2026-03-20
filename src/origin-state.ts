@@ -1,19 +1,22 @@
 import type { LoggerLike } from "./logger";
-import type { OriginState, OriginStateStats } from "./types";
+import type {
+	OfflineAttemptResult,
+	OriginState,
+	OriginStateStats,
+	ScriptMode,
+} from "./types";
 
 export class OriginStateTracker {
 	private readonly states = new Map<string, OriginState>();
 
 	constructor(
 		private readonly restartThreshold: number,
-		private readonly restartArg = "-rsc",
-		private readonly updateArg = "-usc",
 		private readonly logger?: LoggerLike,
 	) {}
 
 	clearOriginState(origin: string): void {
 		if (this.states.has(origin)) {
-			this.logger?.debug(`[${origin}] Clearing state (now online)`);
+			this.logger?.debug({ origin }, "Clearing origin state after recovery");
 			this.states.delete(origin);
 		}
 	}
@@ -27,23 +30,21 @@ export class OriginStateTracker {
 
 		const removed = beforeSize - this.states.size;
 		if (removed > 0) {
-			this.logger?.info(
-				`Cleaned up ${removed} origin(s) that came back online`,
-			);
+			this.logger?.info({ removed }, "Cleared recovered origin state");
 		}
 	}
 
-	getScriptArgs(origin: string): string {
+	getScriptMode(origin: string): ScriptMode {
 		const state = this.states.get(origin);
 		if (!state) {
-			return this.restartArg;
+			return "restart";
 		}
 
 		if (state.successiveOfflineCount >= this.restartThreshold) {
-			return this.updateArg;
+			return "update";
 		}
 
-		return this.restartArg;
+		return "restart";
 	}
 
 	getState(origin: string): OriginState | undefined {
@@ -64,7 +65,10 @@ export class OriginStateTracker {
 		};
 	}
 
-	recordOfflineAttempt(origin: string, timestamp = Date.now()): OriginState {
+	recordOfflineAttempt(
+		origin: string,
+		timestamp = Date.now(),
+	): OfflineAttemptResult {
 		const existing = this.states.get(origin);
 
 		if (existing) {
@@ -82,10 +86,22 @@ export class OriginStateTracker {
 			throw new Error(`Expected origin state to exist for ${origin}`);
 		}
 
+		const scriptMode = this.getScriptMode(origin);
 		this.logger?.debug(
-			`[${origin}] Recorded offline attempt #${state.successiveOfflineCount}`,
+			{
+				origin,
+				scriptMode,
+				successiveOfflineCount: state.successiveOfflineCount,
+			},
+			"Recorded offline attempt",
 		);
 
-		return state;
+		return {
+			origin,
+			scriptMode,
+			state: {
+				...state,
+			},
+		};
 	}
 }
