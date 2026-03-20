@@ -200,6 +200,34 @@ Important metrics:
 - `rotom_watcher_origins_offline`
 - `rotom_watcher_last_successful_poll_timestamp_seconds`
 
+### Grafana Dashboard
+
+An importable Grafana dashboard lives at `grafana/dashboards/rotom-watcher-overview.json`.
+
+Import flow:
+
+1. In Grafana, go to `Dashboards` -> `New` -> `Import`.
+2. Upload `grafana/dashboards/rotom-watcher-overview.json`.
+3. When Grafana asks for `DS_PROMETHEUS`, choose the Prometheus datasource that already scrapes this service's `/metrics` endpoint.
+
+What the dashboard shows:
+
+- Top-row operator health:
+  circuit breaker state, last successful poll age, offline origins, queue saturation, queued jobs, and running jobs.
+- API behavior:
+  poll duration percentiles, request rate, latency p95, and failure rate by reason.
+- Recovery script behavior:
+  attempts, successes, failures, retries, and script duration p95.
+- Queue and origin pressure:
+  queue capacity vs backlog, tracked origins vs offline origins, and duplicate deletion rate.
+
+Example:
+
+- Before:
+  you can query `rotom_watcher_*` metrics one at a time, but you have to mentally stitch together whether the problem is the poll loop, the API, or the recovery script.
+- After:
+  the top row answers "is rotom-watcher healthy right now?" and the lower panels answer "what part is going sideways?"
+
 ## Failure Modes
 
 - Invalid startup config:
