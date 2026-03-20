@@ -2,15 +2,11 @@ import { readFileSync } from "node:fs";
 
 import type { LoggerLike } from "../observability/logger";
 import {
-	type Config,
-	type ConfigProvider,
-	createConfig,
-} from "./schema";
-import {
 	type ConfigWatcherLike,
 	defaultWatchImplementation,
 	loadTomlConfig,
 } from "./file";
+import { type Config, type ConfigProvider, createConfig } from "./schema";
 
 export interface ConfigReloadEvent {
 	changedKeys: Array<keyof Config>;
@@ -23,7 +19,10 @@ export interface ConfigManagerOptions {
 	configPath: string;
 	env?: Record<string, string | undefined>;
 	logger?: LoggerLike;
-	readFileImplementation?: (filePath: string, encoding: BufferEncoding) => string;
+	readFileImplementation?: (
+		filePath: string,
+		encoding: BufferEncoding,
+	) => string;
 	scheduleReload?: (reload: () => void) => unknown;
 	watchImplementation?: (
 		configPath: string,

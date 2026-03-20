@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test";
-
-import { CircuitBreaker } from "./circuit-breaker";
 import type { LoggerLike } from "../observability/logger";
+import { CircuitBreaker } from "./circuit-breaker";
 
 const logger: LoggerLike = {
 	debug: () => undefined,

@@ -2,10 +2,10 @@ import type { ConfigProvider } from "../config/schema";
 import type { LoggerLike } from "../observability/logger";
 import type { Metrics } from "../observability/metrics";
 import type { RotomApiClient } from "../rotom/client";
-import { sleep } from "../shared/utils";
 import type { CircuitBreaker } from "../runtime/circuit-breaker";
 import type { JobQueue } from "../runtime/job-queue";
 import type { ScriptRunner } from "../runtime/script-runner";
+import { sleep } from "../shared/utils";
 import { evaluateDevices } from "./device-evaluation";
 import type { OriginStateTracker } from "./origin-state";
 

@@ -55,7 +55,9 @@ describe("ObservabilityServer", () => {
 	test("returns 404 for unknown routes", async () => {
 		const metrics = new Metrics();
 		const server = new ObservabilityServer("127.0.0.1", 9_090, logger, metrics);
-		const response = await server.handleRequest(new Request("http://localhost/nope"));
+		const response = await server.handleRequest(
+			new Request("http://localhost/nope"),
+		);
 		const body = await response.json();
 
 		expect(response.status).toBe(404);

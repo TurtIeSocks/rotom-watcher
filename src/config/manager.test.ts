@@ -246,7 +246,9 @@ level = "trace"
 	});
 
 	test("resolves the default and overridden config path", () => {
-		expect(resolveConfigPath({})).toBe(path.resolve(process.cwd(), "config.toml"));
+		expect(resolveConfigPath({})).toBe(
+			path.resolve(process.cwd(), "config.toml"),
+		);
 		expect(
 			resolveConfigPath({
 				ROTOM_CONFIG_PATH: "./deploy/rotom.toml",

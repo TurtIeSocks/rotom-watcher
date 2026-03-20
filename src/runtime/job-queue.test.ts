@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test";
-
-import { JobQueue } from "./job-queue";
 import type { LoggerLike } from "../observability/logger";
+import { JobQueue } from "./job-queue";
 
 const logger: LoggerLike = {
 	debug: () => undefined,

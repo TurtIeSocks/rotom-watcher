@@ -1,6 +1,6 @@
-import { parse as parseToml } from "@iarna/toml";
 import { watch } from "node:fs";
 import path from "node:path";
+import { parse as parseToml } from "@iarna/toml";
 
 export interface ConfigWatcherLike {
 	close(): void;
@@ -42,7 +42,10 @@ export const defaultWatchImplementation = (
 
 export const loadTomlConfig = (
 	configPath: string,
-	readFileImplementation: (filePath: string, encoding: BufferEncoding) => string,
+	readFileImplementation: (
+		filePath: string,
+		encoding: BufferEncoding,
+	) => string,
 ): unknown => {
 	try {
 		return parseToml(readFileImplementation(configPath, "utf8"));

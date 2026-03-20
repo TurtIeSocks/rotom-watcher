@@ -476,15 +476,17 @@ describe("DeviceMonitor", () => {
 		});
 
 		const stopCalls: Array<{ exitCode: number; signal: string }> = [];
-		(monitor as { stop: (signal: string, exitCode: number) => Promise<void> }).stop =
-			async (signal: string, exitCode: number) => {
-				stopCalls.push({
-					exitCode,
-					signal,
-				});
-			};
-		(monitor as unknown as { runScheduledCheck: () => Promise<void> }).runScheduledCheck =
-			async () => undefined;
+		(
+			monitor as { stop: (signal: string, exitCode: number) => Promise<void> }
+		).stop = async (signal: string, exitCode: number) => {
+			stopCalls.push({
+				exitCode,
+				signal,
+			});
+		};
+		(
+			monitor as unknown as { runScheduledCheck: () => Promise<void> }
+		).runScheduledCheck = async () => undefined;
 
 		monitor.start();
 		scheduledCallbacks[0]?.();
@@ -537,12 +539,14 @@ describe("DeviceMonitor", () => {
 			),
 		});
 
-		(monitor as unknown as { checkAndRunScript: () => Promise<void> }).checkAndRunScript =
-			async () => undefined;
-		(monitor as unknown as { scheduleNextCheck: (delayMs: number) => void }).scheduleNextCheck =
-			(delayMs: number) => {
-				scheduledDelays.push(delayMs);
-			};
+		(
+			monitor as unknown as { checkAndRunScript: () => Promise<void> }
+		).checkAndRunScript = async () => undefined;
+		(
+			monitor as unknown as { scheduleNextCheck: (delayMs: number) => void }
+		).scheduleNextCheck = (delayMs: number) => {
+			scheduledDelays.push(delayMs);
+		};
 
 		await (
 			monitor as unknown as { runScheduledCheck: () => Promise<void> }

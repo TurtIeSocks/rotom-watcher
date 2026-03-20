@@ -1,8 +1,5 @@
-import type {
-	DeviceEvaluationResult,
-	OriginDecision,
-} from "./types";
 import type { Device, Worker } from "../rotom/types";
+import type { DeviceEvaluationResult, OriginDecision } from "./types";
 
 export interface EvaluateDevicesOptions {
 	currentTimeMs: number;

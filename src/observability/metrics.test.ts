@@ -37,6 +37,8 @@ describe("Metrics", () => {
 		expect(output).toContain("rotom_watcher_api_failures_total");
 		expect(output).toContain("rotom_watcher_script_failures_total");
 		expect(output).toContain("rotom_watcher_duplicate_deletions_total");
-		expect(output).toContain("rotom_watcher_last_successful_poll_timestamp_seconds");
+		expect(output).toContain(
+			"rotom_watcher_last_successful_poll_timestamp_seconds",
+		);
 	});
 });

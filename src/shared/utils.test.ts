@@ -50,16 +50,15 @@ describe("fetchWithTimeout", () => {
 	test("passes an abort signal to the fetch implementation", async () => {
 		let receivedAbortSignal = false;
 
-		await fetchWithTimeout(
-			"https://example.com",
-			1_000,
-			(async (_url, init) => {
-				receivedAbortSignal = init?.signal instanceof AbortSignal;
-				return new Response("ok", {
-					status: 200,
-				});
-			}) as typeof fetch,
-		);
+		await fetchWithTimeout("https://example.com", 1_000, (async (
+			_url,
+			init,
+		) => {
+			receivedAbortSignal = init?.signal instanceof AbortSignal;
+			return new Response("ok", {
+				status: 200,
+			});
+		}) as typeof fetch);
 
 		expect(receivedAbortSignal).toBe(true);
 	});

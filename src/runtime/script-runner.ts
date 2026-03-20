@@ -102,9 +102,7 @@ export class ScriptRunner {
 	}
 
 	private resolveScriptArg(config: Config, scriptMode: ScriptMode): string {
-		return scriptMode === "update"
-			? config.scriptUpdate
-			: config.scriptRestart;
+		return scriptMode === "update" ? config.scriptUpdate : config.scriptRestart;
 	}
 
 	private runCommand(
