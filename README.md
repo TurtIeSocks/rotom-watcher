@@ -2,25 +2,6 @@
 
 `rotom-watcher` polls a Rotom API, evaluates device state per origin, deletes dead duplicate devices when an origin is still online, and runs a recovery script when an origin appears offline.
 
-## What Changed
-
-This service now behaves like a production process instead of a best-effort script wrapper:
-
-- Config is loaded from `config.toml` and validated at startup.
-- Environment variables still override TOML values.
-- The process watches the TOML file and hot reloads valid changes.
-- Invalid reloads do not replace the last known-good config.
-- Rotom API responses are schema-validated before the monitor trusts them.
-- Script execution uses `spawn()` with argv instead of a shell command string.
-- Logs are structured JSON by default.
-- Prometheus metrics plus `/healthz` and `/readyz` are exposed over HTTP.
-- Offline recovery decisions happen once per origin per poll, even when duplicate stale device rows exist.
-
-Example:
-
-- Before: two stale rows for `alpha` could increment the offline counter twice in one poll.
-- After: `alpha` is evaluated once, queued once, and only advances one recovery step.
-
 ## Running
 
 Install dependencies:
