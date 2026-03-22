@@ -101,6 +101,11 @@ export class RotomApiClient {
 				).toString(),
 				config.fetchTimeoutMs,
 				this.fetchImplementation,
+				{
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: "{}",
+				},
 			);
 			const durationMs = Date.now() - startTime;
 
