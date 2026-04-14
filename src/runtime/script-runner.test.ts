@@ -166,6 +166,137 @@ exit 1
 		expect(details?.stderr).toContain("[truncated");
 	});
 
+	test("escalates to SIGKILL and abandons the child when SIGTERM and SIGKILL are ignored", async () => {
+		const killCalls: Array<string | number | undefined> = [];
+		const warnLogs: CapturedLog[] = [];
+		const errorLogs: CapturedLog[] = [];
+
+		const fakeSpawn = (() => {
+			const child = new EventEmitter() as EventEmitter & {
+				stderr: EventEmitter;
+				stdout: EventEmitter;
+				kill: (signal?: string | number) => boolean;
+			};
+			child.stdout = new EventEmitter();
+			child.stderr = new EventEmitter();
+			// Intentionally do nothing on kill — simulates a child that
+			// ignores both SIGTERM and SIGKILL.
+			child.kill = (signal?: string | number) => {
+				killCalls.push(signal);
+				return true;
+			};
+			return child;
+		}) as unknown as typeof import("node:child_process").spawn;
+
+		const logs: CapturedLog[] = [];
+		const logger: LoggerLike = {
+			debug: (...args: unknown[]) => logs.push({ args, level: "debug" }),
+			error: (...args: unknown[]) => {
+				const entry: CapturedLog = { args, level: "error" };
+				logs.push(entry);
+				errorLogs.push(entry);
+			},
+			info: (...args: unknown[]) => logs.push({ args, level: "info" }),
+			warn: (...args: unknown[]) => {
+				const entry: CapturedLog = { args, level: "warn" };
+				logs.push(entry);
+				warnLogs.push(entry);
+			},
+		};
+
+		const config: Config = {
+			...createConfig("/tmp/ignored.sh"),
+			maxRetries: 0,
+			scriptTimeoutMs: 20,
+			scriptKillGracePeriodMs: 1_000, // clamped floor in runner
+		};
+		// Override the min-floor by keeping it at 1000ms via config; the
+		// runner uses Math.max(1000, config). We rely on the built-in floor.
+
+		const runner = new ScriptRunner(
+			createConfigProvider(config),
+			logger,
+			new Metrics(),
+			async () => undefined,
+			() => 0,
+			fakeSpawn,
+		);
+
+		await expect(runner.execute("alpha", "restart")).rejects.toMatchObject({
+			reason: "timeout",
+		});
+
+		expect(killCalls).toContain("SIGTERM");
+		expect(killCalls).toContain("SIGKILL");
+		expect(warnLogs.some((entry) => {
+			const details = entry.args[1] as string | undefined;
+			return typeof details === "string" && details.includes("SIGKILL");
+		})).toBe(true);
+		expect(errorLogs.some((entry) => {
+			const msg = entry.args[1] as string | undefined;
+			return typeof msg === "string" && msg.includes("abandoning child");
+		})).toBe(true);
+	}, 10_000);
+
+	test("settles the promise when the child exits naturally after SIGTERM", async () => {
+		const killCalls: string[] = [];
+		let closeHandler: ((code: number | null, signal: NodeJS.Signals | null) => void) | undefined;
+
+		const fakeSpawn = (() => {
+			const child = new EventEmitter() as EventEmitter & {
+				stderr: EventEmitter;
+				stdout: EventEmitter;
+				kill: (signal?: string) => boolean;
+			};
+			child.stdout = new EventEmitter();
+			child.stderr = new EventEmitter();
+			child.kill = (signal?: string) => {
+				killCalls.push(signal ?? "unknown");
+				// Simulate the child exiting promptly on SIGTERM by firing
+				// `close` on the next tick.
+				if (signal === "SIGTERM") {
+					queueMicrotask(() => {
+						closeHandler?.(null, "SIGTERM" as NodeJS.Signals);
+					});
+				}
+				return true;
+			};
+
+			const origOn = child.on.bind(child);
+			child.on = ((event: string, handler: (...args: unknown[]) => void) => {
+				if (event === "close") {
+					closeHandler = handler as typeof closeHandler;
+				}
+				return origOn(event, handler);
+			}) as typeof child.on;
+
+			return child;
+		}) as unknown as typeof import("node:child_process").spawn;
+
+		const runner = new ScriptRunner(
+			createConfigProvider({
+				...createConfig("/tmp/ignored.sh"),
+				maxRetries: 0,
+				scriptTimeoutMs: 10,
+			}),
+			createLogger([]),
+			new Metrics(),
+			async () => undefined,
+			() => 0,
+			fakeSpawn,
+		);
+
+		// Child exits due to SIGTERM -> `close` fires with a signal,
+		// handled as a "signal" failure.
+		await expect(runner.execute("alpha", "restart")).rejects.toMatchObject({
+			reason: "timeout",
+		});
+
+		expect(killCalls[0]).toBe("SIGTERM");
+		// SIGKILL should never be sent because the child exited first.
+		expect(killCalls).not.toContain("SIGKILL");
+	});
+
 	test("classifies child process spawn failures", async () => {
 		const logs: CapturedLog[] = [];
 		const failingSpawn = (() => {
