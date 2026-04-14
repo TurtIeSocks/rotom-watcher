@@ -15,19 +15,32 @@ export interface QueueStatusObserver {
 	updateQueueStatus(status: QueueStatus): void;
 }
 
+export interface JobQueueOptions {
+	/**
+	 * Upper bound on how long a single job may occupy an origin slot before
+	 * it is considered stuck and the origin is released. This is a safety
+	 * net against leaks in the task's own cleanup; tasks should still enforce
+	 * their own timeouts.
+	 */
+	stuckJobTimeoutMs?: number;
+}
+
 export class JobQueue {
 	private concurrency: number;
 	private duplicateRejectedTotal = 0;
 	private readonly inProgress = new Set<string>();
 	private readonly queued: QueueJob[] = [];
 	private readonly running = new Set<QueueJob>();
+	private readonly stuckJobTimeoutMs: number;
 
 	constructor(
 		concurrency: number,
 		private readonly logger: LoggerLike,
 		private readonly observer?: QueueStatusObserver,
+		options: JobQueueOptions = {},
 	) {
 		this.concurrency = concurrency;
+		this.stuckJobTimeoutMs = options.stuckJobTimeoutMs ?? 0;
 	}
 
 	async add(task: () => Promise<void>, origin: string): Promise<void> {
@@ -43,16 +56,39 @@ export class JobQueue {
 
 		return new Promise((resolve, reject) => {
 			const job: QueueJob = async () => {
+				let released = false;
+				const release = () => {
+					if (released) {
+						return;
+					}
+					released = true;
+					this.inProgress.delete(origin);
+					this.running.delete(job);
+					this.notifyStatusChanged();
+					this.processQueue();
+				};
+
+				let watchdog: ReturnType<typeof setTimeout> | undefined;
+				if (this.stuckJobTimeoutMs > 0) {
+					watchdog = setTimeout(() => {
+						this.logger.error(
+							{ origin, timeoutMs: this.stuckJobTimeoutMs },
+							"Job exceeded stuck-job watchdog; releasing origin slot",
+						);
+						release();
+					}, this.stuckJobTimeoutMs);
+				}
+
 				try {
 					await task();
 					resolve();
 				} catch (error) {
 					reject(error);
 				} finally {
-					this.inProgress.delete(origin);
-					this.running.delete(job);
-					this.notifyStatusChanged();
-					this.processQueue();
+					if (watchdog) {
+						clearTimeout(watchdog);
+					}
+					release();
 				}
 			};
 

@@ -18,6 +18,7 @@ export interface Config {
 	metricsPort: number;
 	restartThreshold: number;
 	rotomApiBaseUrl: string;
+	scriptKillGracePeriodMs: number;
 	scriptPath: string;
 	scriptRestart: string;
 	scriptTimeoutMs: number;
@@ -92,6 +93,10 @@ const fileConfigMappings = [
 	{
 		envKey: "SCRIPT_TIMEOUT_MS",
 		path: ["scripts", "timeout_ms"],
+	},
+	{
+		envKey: "SCRIPT_KILL_GRACE_PERIOD_MS",
+		path: ["scripts", "kill_grace_period_ms"],
 	},
 	{
 		envKey: "RESTART_THRESHOLD",
@@ -202,6 +207,10 @@ const configSchema = z
 			(value) => value ?? "-rsc",
 			z.string().min(1, "SCRIPT_RESTART_ARG must not be empty"),
 		),
+		SCRIPT_KILL_GRACE_PERIOD_MS: positiveInteger(
+			"SCRIPT_KILL_GRACE_PERIOD_MS",
+			5_000,
+		),
 		SCRIPT_TIMEOUT_MS: positiveInteger("SCRIPT_TIMEOUT_MS", 300_000),
 		SCRIPT_UPDATE_ARG: z.preprocess(
 			(value) => value ?? "-usc",
@@ -229,6 +238,7 @@ const configSchema = z
 			metricsPort: values.METRICS_PORT,
 			restartThreshold: values.RESTART_THRESHOLD,
 			rotomApiBaseUrl: new URL(values.ROTOM_API_BASE_URL).toString(),
+			scriptKillGracePeriodMs: values.SCRIPT_KILL_GRACE_PERIOD_MS,
 			scriptPath: path.resolve(values.SCRIPT_PATH),
 			scriptRestart: values.SCRIPT_RESTART_ARG,
 			scriptTimeoutMs: values.SCRIPT_TIMEOUT_MS,

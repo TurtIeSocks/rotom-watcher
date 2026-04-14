@@ -2,7 +2,7 @@ import { z } from "zod";
 
 import type { ConfigProvider } from "../config/schema";
 import type { Metrics } from "../observability/metrics";
-import { fetchWithTimeout } from "../shared/utils";
+import { fetchWithTimeout, fetchWithTimeoutHandle } from "../shared/utils";
 import type { StatusResponse } from "./types";
 
 const lastMemorySchema = z.object({
@@ -139,12 +139,14 @@ export class RotomApiClient {
 		const startTime = Date.now();
 		const config = this.configProvider.getConfig();
 
+		let cancelTimeout: (() => void) | undefined;
 		try {
-			const response = await fetchWithTimeout(
+			const { cancel, response } = await fetchWithTimeoutHandle(
 				new URL("/api/status", config.rotomApiBaseUrl).toString(),
 				config.fetchTimeoutMs,
 				this.fetchImplementation,
 			);
+			cancelTimeout = cancel;
 
 			if (!response.ok) {
 				const durationMs = Date.now() - startTime;
@@ -164,21 +166,33 @@ export class RotomApiClient {
 			let payload: unknown;
 
 			try {
+				// The same AbortController covers body reads; if the server
+				// sends headers and then hangs the body, this rejects once
+				// the fetch timeout fires.
 				payload = await response.json();
 			} catch (error) {
 				const durationMs = Date.now() - startTime;
+				const reason: RotomApiErrorCode =
+					error instanceof Error && error.name === "AbortError"
+						? "timeout"
+						: "invalid_json";
 				this.metrics?.recordApiRequest(
 					"fetch_status",
 					"failure",
 					durationMs,
-					"invalid_json",
+					reason,
 				);
 				throw new RotomApiError(
-					"invalid_json",
+					reason,
 					error instanceof Error
 						? error.message
-						: "Rotom API returned invalid JSON",
+						: reason === "timeout"
+							? "Rotom API body read timed out"
+							: "Rotom API returned invalid JSON",
 				);
+			} finally {
+				cancelTimeout?.();
+				cancelTimeout = undefined;
 			}
 
 			const parsed = statusResponseSchema.safeParse(payload);
@@ -210,6 +224,8 @@ export class RotomApiClient {
 				classifiedError.code,
 			);
 			throw classifiedError;
+		} finally {
+			cancelTimeout?.();
 		}
 	}
 }

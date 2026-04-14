@@ -6,15 +6,53 @@ import type {
 	ScriptMode,
 } from "./types";
 
+export interface OriginStateTrackerOptions {
+	/**
+	 * If set, entries whose `lastSeen` is older than this many milliseconds
+	 * relative to the sweep timestamp are considered abandoned (origin was
+	 * removed upstream, renamed, or has permanently died) and are dropped.
+	 * Prevents unbounded map growth over long runtimes.
+	 */
+	maxEntryAgeMs?: number;
+}
+
 export class OriginStateTracker {
+	private readonly maxEntryAgeMs: number;
 	private restartThreshold: number;
 	private readonly states = new Map<string, OriginState>();
 
 	constructor(
 		restartThreshold: number,
 		private readonly logger?: LoggerLike,
+		options: OriginStateTrackerOptions = {},
 	) {
 		this.restartThreshold = restartThreshold;
+		this.maxEntryAgeMs = options.maxEntryAgeMs ?? 0;
+	}
+
+	/**
+	 * Remove entries that haven't been touched in `maxEntryAgeMs`. Called
+	 * from the device monitor each poll. No-op when TTL is disabled.
+	 */
+	sweepStale(nowMs: number): number {
+		if (this.maxEntryAgeMs <= 0) {
+			return 0;
+		}
+		const cutoff = nowMs - this.maxEntryAgeMs;
+		let removed = 0;
+		for (const [origin, state] of this.states) {
+			if (state.lastSeen < cutoff) {
+				this.states.delete(origin);
+				removed++;
+			}
+		}
+		if (removed > 0) {
+			this.logger?.info(
+				{ removed },
+				"Swept stale origin state entries (TTL)",
+			);
+		}
+		return removed;
 	}
 
 	clearOriginState(origin: string): void {

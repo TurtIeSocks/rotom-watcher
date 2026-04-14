@@ -72,6 +72,7 @@ const config: Config = {
 	metricsPort: 9_090,
 	restartThreshold: 2,
 	rotomApiBaseUrl: "https://example.com/",
+	scriptKillGracePeriodMs: 1_000,
 	scriptPath: "/tmp/test-script.sh",
 	scriptRestart: "-rsc",
 	scriptTimeoutMs: 1_000,
@@ -441,11 +442,14 @@ describe("DeviceMonitor", () => {
 		expect(shutdownCalls).toBe(1);
 	});
 
-	test("registers signal handlers and routes them through stop", async () => {
+	test("routes signals through stop but keeps running on stray rejections/exceptions", async () => {
 		const errorLogs: unknown[] = [];
 		const capturingLogger = createCapturingLogger(errorLogs);
-		const handlers = new Map<string, (...args: unknown[]) => void>();
+		const onceHandlers = new Map<string, (...args: unknown[]) => void>();
+		const onHandlers = new Map<string, (...args: unknown[]) => void>();
 		const scheduledCallbacks: Array<() => void> = [];
+
+		const originalProcessOn = process.on;
 
 		globalThis.setTimeout = ((callback: Parameters<typeof setTimeout>[0]) => {
 			scheduledCallbacks.push(callback as () => void);
@@ -453,67 +457,63 @@ describe("DeviceMonitor", () => {
 		}) as typeof setTimeout;
 		globalThis.clearTimeout = (() => undefined) as typeof clearTimeout;
 		process.once = ((event: string, handler: (...args: unknown[]) => void) => {
-			handlers.set(event, handler);
+			onceHandlers.set(event, handler);
 			return process;
 		}) as typeof process.once;
+		process.on = ((event: string, handler: (...args: unknown[]) => void) => {
+			onHandlers.set(event, handler);
+			return process;
+		}) as typeof process.on;
 
-		const monitor = new DeviceMonitor({
-			circuitBreaker: new CircuitBreaker(5, 60_000, capturingLogger, () => 0),
-			configProvider: createConfigProvider(config),
-			jobQueue: new JobQueue(2, capturingLogger),
-			logger: capturingLogger,
-			metrics: new Metrics(),
-			now: () => 0,
-			originStateTracker: new OriginStateTracker(2, capturingLogger),
-			scriptRunner: new TestScriptRunner(),
-			statusApiClient: new TestStatusApiClient(
-				{
-					devices: [],
-					workers: [],
-				},
-				[],
-			),
-		});
-
-		const stopCalls: Array<{ exitCode: number; signal: string }> = [];
-		(
-			monitor as { stop: (signal: string, exitCode: number) => Promise<void> }
-		).stop = async (signal: string, exitCode: number) => {
-			stopCalls.push({
-				exitCode,
-				signal,
+		try {
+			const monitor = new DeviceMonitor({
+				circuitBreaker: new CircuitBreaker(5, 60_000, capturingLogger, () => 0),
+				configProvider: createConfigProvider(config),
+				jobQueue: new JobQueue(2, capturingLogger),
+				logger: capturingLogger,
+				metrics: new Metrics(),
+				now: () => 0,
+				originStateTracker: new OriginStateTracker(2, capturingLogger),
+				scriptRunner: new TestScriptRunner(),
+				statusApiClient: new TestStatusApiClient(
+					{
+						devices: [],
+						workers: [],
+					},
+					[],
+				),
 			});
-		};
-		(
-			monitor as unknown as { runScheduledCheck: () => Promise<void> }
-		).runScheduledCheck = async () => undefined;
 
-		monitor.start();
-		scheduledCallbacks[0]?.();
-		handlers.get("SIGINT")?.();
-		handlers.get("SIGTERM")?.();
-		handlers.get("uncaughtException")?.(new Error("uncaught"));
-		handlers.get("unhandledRejection")?.("nope");
+			const stopCalls: Array<{ exitCode: number; signal: string }> = [];
+			(
+				monitor as { stop: (signal: string, exitCode: number) => Promise<void> }
+			).stop = async (signal: string, exitCode: number) => {
+				stopCalls.push({
+					exitCode,
+					signal,
+				});
+			};
+			(
+				monitor as unknown as { runScheduledCheck: () => Promise<void> }
+			).runScheduledCheck = async () => undefined;
 
-		expect(stopCalls).toEqual([
-			{
-				exitCode: 0,
-				signal: "SIGINT",
-			},
-			{
-				exitCode: 0,
-				signal: "SIGTERM",
-			},
-			{
-				exitCode: 1,
-				signal: "uncaughtException",
-			},
-			{
-				exitCode: 1,
-				signal: "unhandledRejection",
-			},
-		]);
-		expect(errorLogs.length).toBe(2);
+			monitor.start();
+			scheduledCallbacks[0]?.();
+			onceHandlers.get("SIGINT")?.();
+			onceHandlers.get("SIGTERM")?.();
+			onHandlers.get("uncaughtException")?.(new Error("uncaught"));
+			onHandlers.get("unhandledRejection")?.("nope");
+
+			// Signals still shut the monitor down.
+			expect(stopCalls).toEqual([
+				{ exitCode: 0, signal: "SIGINT" },
+				{ exitCode: 0, signal: "SIGTERM" },
+			]);
+			// Stray exceptions/rejections are logged but DO NOT stop the monitor.
+			expect(errorLogs.length).toBe(2);
+		} finally {
+			process.on = originalProcessOn;
+		}
 	});
 
 	test("reschedules after a scheduled check when not shutting down", async () => {

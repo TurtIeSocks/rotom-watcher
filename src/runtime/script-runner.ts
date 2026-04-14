@@ -123,9 +123,84 @@ export class ScriptRunner {
 				stdio: ["ignore", "pipe", "pipe"],
 			});
 
+			const killGraceMs = Math.max(1_000, config.scriptKillGracePeriodMs);
+			let sigkillTimeoutId: ReturnType<typeof setTimeout> | undefined;
+			let hardTimeoutId: ReturnType<typeof setTimeout> | undefined;
+
+			const clearEscalationTimers = () => {
+				if (sigkillTimeoutId) {
+					clearTimeout(sigkillTimeoutId);
+					sigkillTimeoutId = undefined;
+				}
+				if (hardTimeoutId) {
+					clearTimeout(hardTimeoutId);
+					hardTimeoutId = undefined;
+				}
+			};
+
+			const settleTimeout = (
+				details: {
+					code?: number | null;
+					signal?: NodeJS.Signals | null;
+					forced?: boolean;
+				} = {},
+			) => {
+				if (completed) {
+					return;
+				}
+				completed = true;
+				clearEscalationTimers();
+				const failureDetails = {
+					config,
+					code: details.code,
+					signal: details.signal,
+					stderr: details.forced
+						? `${stderr}\n[watcher] child ignored SIGTERM and SIGKILL; abandoned`
+						: stderr,
+					stdout,
+				};
+				reject(
+					this.handleFailure(
+						origin,
+						scriptMode,
+						startTime,
+						"timeout",
+						failureDetails,
+					),
+				);
+			};
+
 			const timeoutId = setTimeout(() => {
 				timeoutTriggered = true;
-				child.kill("SIGTERM");
+				try {
+					child.kill("SIGTERM");
+				} catch {
+					// ignore: child may already be dead
+				}
+
+				// Escalate to SIGKILL if the child ignores SIGTERM.
+				sigkillTimeoutId = setTimeout(() => {
+					this.logger.warn(
+						{ origin, scriptMode },
+						"Script ignored SIGTERM; sending SIGKILL",
+					);
+					try {
+						child.kill("SIGKILL");
+					} catch {
+						// ignore
+					}
+
+					// Ultimate fallback: if even SIGKILL doesn't produce a
+					// `close` event within the grace window, settle the
+					// promise ourselves so the job queue never gets stuck.
+					hardTimeoutId = setTimeout(() => {
+						this.logger.error(
+							{ origin, scriptMode },
+							"Script did not exit after SIGKILL; abandoning child",
+						);
+						settleTimeout({ forced: true });
+					}, killGraceMs);
+				}, killGraceMs);
 			}, config.scriptTimeoutMs);
 
 			child.stdout.on("data", (chunk: Buffer | string) => {
@@ -144,6 +219,7 @@ export class ScriptRunner {
 
 				completed = true;
 				clearTimeout(timeoutId);
+				clearEscalationTimers();
 				reject(
 					this.handleFailure(origin, scriptMode, startTime, "spawn_error", {
 						config,
@@ -161,6 +237,7 @@ export class ScriptRunner {
 
 				completed = true;
 				clearTimeout(timeoutId);
+				clearEscalationTimers();
 
 				if (timeoutTriggered) {
 					reject(

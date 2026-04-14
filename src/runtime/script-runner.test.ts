@@ -68,6 +68,7 @@ const createConfig = (scriptPath: string): Config => ({
 	metricsPort: 9_090,
 	restartThreshold: 2,
 	rotomApiBaseUrl: "https://example.com/",
+	scriptKillGracePeriodMs: 1_000,
 	scriptPath,
 	scriptRestart: "-rsc",
 	scriptTimeoutMs: 50,

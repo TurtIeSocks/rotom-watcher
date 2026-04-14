@@ -210,6 +210,7 @@ const createConfigProvider = (
 		metricsPort: 9_090,
 		restartThreshold: 2,
 		rotomApiBaseUrl,
+		scriptKillGracePeriodMs: 1_000,
 		scriptPath: "/tmp/test-script.sh",
 		scriptRestart: "-rsc",
 		scriptTimeoutMs: 1_000,

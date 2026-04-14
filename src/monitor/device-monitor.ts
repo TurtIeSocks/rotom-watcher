@@ -11,6 +11,16 @@ import type { OriginStateTracker } from "./origin-state";
 
 export interface DeviceMonitorDependencies {
 	circuitBreaker: CircuitBreaker;
+	/**
+	 * Optional dedicated breaker for delete-device calls. Keeping this
+	 * separate from the fetch-status breaker means a flaky deletion endpoint
+	 * does not block fetches and, crucially, a tripped fetch-status breaker
+	 * opening due to e.g. a transient read timeout does not permanently
+	 * suppress deletion attempts: once a poll manages to fetch status, any
+	 * dead duplicates observed will be attempted as long as the deletion
+	 * breaker allows.
+	 */
+	deletionCircuitBreaker?: CircuitBreaker;
 	configProvider: ConfigProvider;
 	jobQueue: JobQueue;
 	logger: LoggerLike;
@@ -66,6 +76,7 @@ export class DeviceMonitor {
 	async checkAndRunScript(): Promise<void> {
 		const {
 			circuitBreaker,
+			deletionCircuitBreaker,
 			configProvider,
 			jobQueue,
 			logger,
@@ -106,6 +117,7 @@ export class DeviceMonitor {
 			});
 
 			originStateTracker.cleanupOnlineOrigins(evaluation.onlineOrigins);
+			originStateTracker.sweepStale(now());
 			metrics.updateOriginState(originStateTracker.getStats());
 
 			const duplicateDeletions = evaluation.originDecisions.flatMap(
@@ -113,51 +125,69 @@ export class DeviceMonitor {
 			);
 
 			if (duplicateDeletions.length > 0) {
-				logger.info(
-					{
-						count: duplicateDeletions.length,
-					},
-					"Deleting dead duplicate devices",
-				);
+				if (
+					deletionCircuitBreaker &&
+					!deletionCircuitBreaker.canExecute()
+				) {
+					logger.warn(
+						{
+							count: duplicateDeletions.length,
+							state: deletionCircuitBreaker.getState(),
+						},
+						"Deletion circuit breaker OPEN; deferring dead duplicate deletions",
+					);
+				} else {
+					logger.info(
+						{
+							count: duplicateDeletions.length,
+						},
+						"Deleting dead duplicate devices",
+					);
 
-				const deletions = duplicateDeletions.map(async (device) => {
-					try {
-						const deleted = await statusApiClient.deleteDevice(device.deviceId);
+					const deletions = duplicateDeletions.map(async (device) => {
+						try {
+							const deleted = await statusApiClient.deleteDevice(
+								device.deviceId,
+							);
 
-						if (!deleted) {
-							metrics.recordDuplicateDeletion("failure");
-							logger.warn(
+							if (!deleted) {
+								metrics.recordDuplicateDeletion("failure");
+								deletionCircuitBreaker?.recordFailure();
+								logger.warn(
+									{
+										deviceId: device.deviceId,
+										origin: device.origin,
+									},
+									"Failed to delete dead duplicate device",
+								);
+								return;
+							}
+
+							metrics.recordDuplicateDeletion("success");
+							deletionCircuitBreaker?.recordSuccess();
+							logger.info(
 								{
 									deviceId: device.deviceId,
 									origin: device.origin,
 								},
-								"Failed to delete dead duplicate device",
+								"Deleted dead duplicate device",
 							);
-							return;
+						} catch (error: unknown) {
+							metrics.recordDuplicateDeletion("failure");
+							deletionCircuitBreaker?.recordFailure();
+							logger.error(
+								{
+									deviceId: device.deviceId,
+									error,
+									origin: device.origin,
+								},
+								"Error deleting dead duplicate device",
+							);
 						}
+					});
 
-						metrics.recordDuplicateDeletion("success");
-						logger.info(
-							{
-								deviceId: device.deviceId,
-								origin: device.origin,
-							},
-							"Deleted dead duplicate device",
-						);
-					} catch (error: unknown) {
-						metrics.recordDuplicateDeletion("failure");
-						logger.error(
-							{
-								deviceId: device.deviceId,
-								error,
-								origin: device.origin,
-							},
-							"Error deleting dead duplicate device",
-						);
-					}
-				});
-
-				await Promise.allSettled(deletions);
+					await Promise.allSettled(deletions);
+				}
 			}
 
 			const decisionsToProcess = evaluation.originDecisions.filter(
@@ -195,11 +225,18 @@ export class DeviceMonitor {
 
 					return jobQueue
 						.add(
-							() =>
-								scriptRunner.execute(
+							() => {
+								// Re-read the script mode at execution time. If the
+								// job sat in the queue while subsequent polls
+								// incremented the offline counter past the restart
+								// threshold, we want to run the updated mode
+								// (typically `update`) instead of the stale one
+								// captured at queue time.
+								const currentMode = originStateTracker.getScriptMode(
 									decision.origin,
-									offlineAttempt.scriptMode,
-								),
+								);
+								return scriptRunner.execute(decision.origin, currentMode);
+							},
 							decision.origin,
 						)
 						.catch((error: unknown) => {
@@ -323,24 +360,28 @@ export class DeviceMonitor {
 			void this.stop("SIGTERM", 0);
 		});
 
-		process.once("uncaughtException", (error) => {
+		// Stray unhandled rejections / uncaught exceptions used to trigger a
+		// full shutdown here, which permanently disabled the polling loop
+		// (`shutdownRequested` was sticky). A single unrelated rejection
+		// anywhere in the process could therefore stop all device resets and
+		// dead-device deletions. We now log loudly and keep the monitor
+		// running; genuine fatal errors will still surface via logs/metrics.
+		process.on("uncaughtException", (error) => {
 			logger.error(
 				{
 					error,
 				},
-				"Uncaught exception",
+				"Uncaught exception (monitor continuing)",
 			);
-			void this.stop("uncaughtException", 1);
 		});
 
-		process.once("unhandledRejection", (reason) => {
+		process.on("unhandledRejection", (reason) => {
 			logger.error(
 				{
 					reason,
 				},
-				"Unhandled promise rejection",
+				"Unhandled promise rejection (monitor continuing)",
 			);
-			void this.stop("unhandledRejection", 1);
 		});
 	}
 

@@ -27,21 +27,68 @@ export const calculateRetryDelay = (
 	return Math.max(0, Math.round(cappedDelay + jitter));
 };
 
+export interface FetchWithTimeoutResult {
+	/**
+	 * Aborts the request. Safe to call after the response has been consumed;
+	 * once the body is fully read this becomes a no-op.
+	 */
+	cancel: () => void;
+	response: Response;
+}
+
+/**
+ * Wraps `fetch` with a timeout covering both the request AND the response
+ * body read. Callers must invoke `result.cancel()` once they are done with
+ * the body (success or failure) to release the timer.
+ *
+ * The legacy `fetchWithTimeout(...)` call site — which only needed the
+ * headers — remains supported; it clears the timer in the `finally` block.
+ */
+export const fetchWithTimeoutHandle = async (
+	url: string,
+	timeoutMs: number,
+	fetchImplementation: typeof fetch = fetch,
+	options: RequestInit = {},
+): Promise<FetchWithTimeoutResult> => {
+	const controller = new AbortController();
+	let timedOut = false;
+	const timeoutId = setTimeout(() => {
+		timedOut = true;
+		controller.abort();
+	}, timeoutMs);
+
+	try {
+		const response = await fetchImplementation(url, {
+			...options,
+			signal: controller.signal,
+		});
+		return {
+			cancel: () => {
+				clearTimeout(timeoutId);
+			},
+			response,
+		};
+	} catch (error) {
+		clearTimeout(timeoutId);
+		if (timedOut && error instanceof Error && error.name === "AbortError") {
+			throw error;
+		}
+		throw error;
+	}
+};
+
 export const fetchWithTimeout = async (
 	url: string,
 	timeoutMs: number,
 	fetchImplementation: typeof fetch = fetch,
 	options: RequestInit = {},
 ): Promise<Response> => {
-	const controller = new AbortController();
-	const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-
-	try {
-		return await fetchImplementation(url, {
-			signal: controller.signal,
-			...options,
-		});
-	} finally {
-		clearTimeout(timeoutId);
-	}
+	const { cancel, response } = await fetchWithTimeoutHandle(
+		url,
+		timeoutMs,
+		fetchImplementation,
+		options,
+	);
+	cancel();
+	return response;
 };
