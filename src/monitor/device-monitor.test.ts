@@ -132,6 +132,7 @@ class TestStatusApiClient extends RotomApiClient {
 
 class TestScriptRunner extends ScriptRunner {
 	readonly executed: Array<{ origin: string; scriptMode: ScriptMode }> = [];
+	readonly groupPipelinesExecuted: string[] = [];
 
 	constructor() {
 		super(createConfigProvider(config), logger, new Metrics());
@@ -146,9 +147,52 @@ class TestScriptRunner extends ScriptRunner {
 			scriptMode,
 		});
 	}
+
+	override async executeGroupPipeline(prefix: string): Promise<void> {
+		this.groupPipelinesExecuted.push(prefix);
+	}
 }
 
 describe("DeviceMonitor", () => {
+	test("runs the group pipeline when every member of a prefix is dead", async () => {
+		const deletedDeviceIds: string[] = [];
+		const scriptRunner = new TestScriptRunner();
+		const monitor = new DeviceMonitor({
+			circuitBreaker: new CircuitBreaker(5, 60_000, logger, () => 60_000),
+			configProvider: createConfigProvider(config),
+			jobQueue: new JobQueue(2, logger),
+			logger,
+			metrics: new Metrics(),
+			now: () => 60_000,
+			originStateTracker: new OriginStateTracker(2, logger),
+			scriptRunner,
+			statusApiClient: new TestStatusApiClient(
+				{
+					devices: [
+						buildDevice({
+							deviceId: "x.1-device",
+							isAlive: false,
+							origin: "x.1",
+						}),
+						buildDevice({
+							deviceId: "x.2-device",
+							isAlive: false,
+							origin: "x.2",
+						}),
+					],
+					workers: [],
+				},
+				deletedDeviceIds,
+			),
+		});
+
+		await monitor.checkAndRunScript();
+
+		expect(scriptRunner.groupPipelinesExecuted).toEqual(["x"]);
+		expect(scriptRunner.executed).toEqual([]);
+		expect(deletedDeviceIds).toEqual([]);
+	});
+
 	test("deletes dead duplicates for origins that still have an online device", async () => {
 		const deletedDeviceIds: string[] = [];
 		const scriptRunner = new TestScriptRunner();
@@ -555,6 +599,86 @@ describe("DeviceMonitor", () => {
 		).runScheduledCheck();
 
 		expect(scheduledDelays).toEqual([12_345]);
+	});
+
+	test("does not execute the group pipeline when no group qualifies", async () => {
+		const scriptRunner = new TestScriptRunner();
+		const monitor = new DeviceMonitor({
+			circuitBreaker: new CircuitBreaker(5, 60_000, logger, () => 60_000),
+			configProvider: createConfigProvider(config),
+			jobQueue: new JobQueue(2, logger),
+			logger,
+			metrics: new Metrics(),
+			now: () => 60_000,
+			originStateTracker: new OriginStateTracker(2, logger),
+			scriptRunner,
+			statusApiClient: new TestStatusApiClient(
+				{
+					devices: [
+						buildDevice({
+							dateLastMessageReceived: 59_000,
+							deviceId: "alpha-device",
+							isAlive: true,
+							origin: "alpha",
+						}),
+					],
+					workers: [buildWorker("alpha")],
+				},
+				[],
+			),
+		});
+
+		await monitor.checkAndRunScript();
+
+		expect(scriptRunner.groupPipelinesExecuted).toEqual([]);
+		expect(scriptRunner.executed).toEqual([]);
+	});
+
+	test("enqueues group pipelines with key 'group:<prefix>'", async () => {
+		const enqueuedKeys: string[] = [];
+		const realQueue = new JobQueue(2, logger);
+		const spyQueue = {
+			add: async (task: () => Promise<void>, key: string) => {
+				enqueuedKeys.push(key);
+				return realQueue.add(task, key);
+			},
+			getStatus: () => realQueue.getStatus(),
+		} as unknown as JobQueue;
+
+		const scriptRunner = new TestScriptRunner();
+		const monitor = new DeviceMonitor({
+			circuitBreaker: new CircuitBreaker(5, 60_000, logger, () => 60_000),
+			configProvider: createConfigProvider(config),
+			jobQueue: spyQueue,
+			logger,
+			metrics: new Metrics(),
+			now: () => 60_000,
+			originStateTracker: new OriginStateTracker(2, logger),
+			scriptRunner,
+			statusApiClient: new TestStatusApiClient(
+				{
+					devices: [
+						buildDevice({
+							deviceId: "x.1-device",
+							isAlive: false,
+							origin: "x.1",
+						}),
+						buildDevice({
+							deviceId: "x.2-device",
+							isAlive: false,
+							origin: "x.2",
+						}),
+					],
+					workers: [],
+				},
+				[],
+			),
+		});
+
+		await monitor.checkAndRunScript();
+
+		expect(enqueuedKeys).toEqual(["group:x"]);
+		expect(scriptRunner.groupPipelinesExecuted).toEqual(["x"]);
 	});
 });
 

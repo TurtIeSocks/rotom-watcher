@@ -253,6 +253,39 @@ export class DeviceMonitor {
 				await Promise.allSettled(jobs);
 			}
 
+			if (evaluation.groupDecisions.length > 0) {
+				logger.warn(
+					{
+						count: evaluation.groupDecisions.length,
+						prefixes: evaluation.groupDecisions.map(
+							(group) => group.prefix,
+						),
+					},
+					"Queueing fully-dead device groups for new+update_all pipeline",
+				);
+
+				const groupJobs = evaluation.groupDecisions.map((group) => {
+					metrics.recordGroupPipelineTriggered(group.prefix);
+					return jobQueue
+						.add(
+							() => scriptRunner.executeGroupPipeline(group.prefix),
+							`group:${group.prefix}`,
+						)
+						.catch((error: unknown) => {
+							logger.error(
+								{
+									error,
+									members: group.members,
+									prefix: group.prefix,
+								},
+								"Group pipeline exhausted retries",
+							);
+						});
+				});
+
+				await Promise.allSettled(groupJobs);
+			}
+
 			metrics.recordPollSuccess(now());
 			logger.info(
 				{
