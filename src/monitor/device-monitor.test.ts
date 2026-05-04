@@ -73,10 +73,12 @@ const config: Config = {
 	restartThreshold: 2,
 	rotomApiBaseUrl: "https://example.com/",
 	scriptKillGracePeriodMs: 1_000,
+	scriptNew: "-new",
 	scriptPath: "/tmp/test-script.sh",
 	scriptRestart: "-rsc",
 	scriptTimeoutMs: 1_000,
 	scriptUpdate: "-usc",
+	scriptUpdateAll: "-u",
 	shutdownGracePeriodMs: 500,
 };
 

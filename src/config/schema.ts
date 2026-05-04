@@ -19,10 +19,12 @@ export interface Config {
 	restartThreshold: number;
 	rotomApiBaseUrl: string;
 	scriptKillGracePeriodMs: number;
+	scriptNew: string;
 	scriptPath: string;
 	scriptRestart: string;
 	scriptTimeoutMs: number;
 	scriptUpdate: string;
+	scriptUpdateAll: string;
 	shutdownGracePeriodMs: number;
 }
 
@@ -89,6 +91,14 @@ const fileConfigMappings = [
 	{
 		envKey: "SCRIPT_UPDATE_ARG",
 		path: ["scripts", "update_arg"],
+	},
+	{
+		envKey: "SCRIPT_NEW_ARG",
+		path: ["scripts", "new_arg"],
+	},
+	{
+		envKey: "SCRIPT_UPDATE_ALL_ARG",
+		path: ["scripts", "update_all_arg"],
 	},
 	{
 		envKey: "SCRIPT_TIMEOUT_MS",
@@ -203,6 +213,10 @@ const configSchema = z
 			(value) => value ?? defaultScriptPath,
 			z.string().min(1, "SCRIPT_PATH must not be empty"),
 		),
+		SCRIPT_NEW_ARG: z.preprocess(
+			(value) => value ?? "-new",
+			z.string().min(1, "SCRIPT_NEW_ARG must not be empty"),
+		),
 		SCRIPT_RESTART_ARG: z.preprocess(
 			(value) => value ?? "-rsc",
 			z.string().min(1, "SCRIPT_RESTART_ARG must not be empty"),
@@ -212,6 +226,10 @@ const configSchema = z
 			5_000,
 		),
 		SCRIPT_TIMEOUT_MS: positiveInteger("SCRIPT_TIMEOUT_MS", 300_000),
+		SCRIPT_UPDATE_ALL_ARG: z.preprocess(
+			(value) => value ?? "-u",
+			z.string().min(1, "SCRIPT_UPDATE_ALL_ARG must not be empty"),
+		),
 		SCRIPT_UPDATE_ARG: z.preprocess(
 			(value) => value ?? "-usc",
 			z.string().min(1, "SCRIPT_UPDATE_ARG must not be empty"),
@@ -239,10 +257,12 @@ const configSchema = z
 			restartThreshold: values.RESTART_THRESHOLD,
 			rotomApiBaseUrl: new URL(values.ROTOM_API_BASE_URL).toString(),
 			scriptKillGracePeriodMs: values.SCRIPT_KILL_GRACE_PERIOD_MS,
+			scriptNew: values.SCRIPT_NEW_ARG,
 			scriptPath: path.resolve(values.SCRIPT_PATH),
 			scriptRestart: values.SCRIPT_RESTART_ARG,
 			scriptTimeoutMs: values.SCRIPT_TIMEOUT_MS,
 			scriptUpdate: values.SCRIPT_UPDATE_ARG,
+			scriptUpdateAll: values.SCRIPT_UPDATE_ALL_ARG,
 			shutdownGracePeriodMs: values.SHUTDOWN_GRACE_PERIOD_MS,
 		}),
 	);

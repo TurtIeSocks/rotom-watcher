@@ -211,10 +211,12 @@ const createConfigProvider = (
 		restartThreshold: 2,
 		rotomApiBaseUrl,
 		scriptKillGracePeriodMs: 1_000,
+		scriptNew: "-new",
 		scriptPath: "/tmp/test-script.sh",
 		scriptRestart: "-rsc",
 		scriptTimeoutMs: 1_000,
 		scriptUpdate: "-usc",
+		scriptUpdateAll: "-u",
 		shutdownGracePeriodMs: 1_000,
 	}),
 });
