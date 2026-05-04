@@ -162,6 +162,13 @@ export class Metrics implements QueueStatusObserver {
 		registers: [this.registry],
 	});
 
+	private readonly groupPipelineTriggered = new Counter({
+		help: "Group recovery pipelines queued, labeled by prefix",
+		labelNames: ["prefix"] as const,
+		name: "rotom_watcher_groups_pipeline_triggered_total",
+		registers: [this.registry],
+	});
+
 	constructor() {
 		collectDefaultMetrics({
 			prefix: "rotom_watcher_process_",
@@ -273,6 +280,12 @@ export class Metrics implements QueueStatusObserver {
 			},
 			durationMs / 1000,
 		);
+	}
+
+	recordGroupPipelineTriggered(prefix: string): void {
+		this.groupPipelineTriggered.inc({
+			prefix,
+		});
 	}
 
 	setCircuitBreakerState(state: CircuitBreakerState): void {
