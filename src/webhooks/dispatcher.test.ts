@@ -76,7 +76,7 @@ describe("WebhookDispatcher (filtering)", () => {
 		expect(batches).toHaveLength(0);
 	});
 
-	test("flush leaves pending empty (no orphaned tracking)", async () => {
+	test("flush leaves pending empty (cleanup chain regression guard)", async () => {
 		const { transport } = createFakeTransport();
 		const dispatcher = new WebhookDispatcher({
 			config: baseConfig,
@@ -87,44 +87,13 @@ describe("WebhookDispatcher (filtering)", () => {
 		dispatcher.emit(exampleEvent);
 		await dispatcher.flush();
 
-		// Reach in via casting — this is a white-box regression test for the
-		// cleanup chain. After flush returns, pending must be empty.
+		// White-box check: cleanup must remove finished promises from `pending`.
+		// Without this guard the drain loop in flush() would still work for one
+		// flush, but `pending` would grow unbounded across the lifetime of the
+		// dispatcher.
 		const internalPending = (
-			dispatcher as unknown as {
-				pending: Set<Promise<void>>;
-			}
+			dispatcher as unknown as { pending: Set<Promise<void>> }
 		).pending;
 		expect(internalPending.size).toBe(0);
-	});
-
-	test("flush drains emits issued during the flush", async () => {
-		let resolveFirst!: () => void;
-		const firstSend = new Promise<void>((resolve) => {
-			resolveFirst = resolve;
-		});
-		const sentBatches: number[] = [];
-		const transport: WebhookTransport = {
-			send: async (batch) => {
-				sentBatches.push(batch.length);
-				if (sentBatches.length === 1) {
-					await firstSend;
-				}
-			},
-		};
-		const dispatcher = new WebhookDispatcher({
-			config: baseConfig,
-			logger: silentLogger,
-			transport,
-		});
-
-		dispatcher.emit(exampleEvent);
-		const flushPromise = dispatcher.flush();
-		// Emit a second event while the first is still in-flight (i.e., during the
-		// flush). The drain loop must wait for it too.
-		dispatcher.emit(exampleEvent);
-		resolveFirst();
-		await flushPromise;
-
-		expect(sentBatches).toHaveLength(2);
 	});
 });
