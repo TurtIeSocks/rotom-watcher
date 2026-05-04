@@ -96,4 +96,128 @@ describe("WebhookDispatcher (filtering)", () => {
 		).pending;
 		expect(internalPending.size).toBe(0);
 	});
+
+	test("coalesceWindowMs = 0 dispatches synchronously, never buffers", async () => {
+		const { batches, transport } = createFakeTransport();
+		const dispatcher = new WebhookDispatcher({
+			config: { ...baseConfig, coalesceWindowMs: 0 },
+			logger: silentLogger,
+			transport,
+		});
+		dispatcher.emit(exampleEvent);
+		dispatcher.emit(exampleEvent);
+		await dispatcher.flush();
+		expect(batches).toHaveLength(2);
+	});
+
+	test("coalesces multiple same-name events emitted within the window", async () => {
+		let now = 0;
+		const timers: Array<{ at: number; fn: () => void }> = [];
+		const setTimer = (fn: () => void, ms: number) => {
+			const id = timers.length;
+			timers.push({ at: now + ms, fn });
+			return id as unknown as ReturnType<typeof setTimeout>;
+		};
+		const clearTimer = (id: ReturnType<typeof setTimeout>) => {
+			const index = id as unknown as number;
+			if (timers[index]) {
+				timers[index] = { at: Number.POSITIVE_INFINITY, fn: () => undefined };
+			}
+		};
+		const advance = (ms: number) => {
+			now += ms;
+			const due = timers.splice(0);
+			for (const t of due) {
+				if (t.at <= now) {
+					t.fn();
+				} else {
+					timers.push(t);
+				}
+			}
+		};
+
+		const { batches, transport } = createFakeTransport();
+		const dispatcher = new WebhookDispatcher({
+			clock: { clearTimer, now: () => now, setTimer },
+			config: {
+				coalesceWindowMs: 1000,
+				discordUrls: ["https://discord.com/api/webhooks/X"],
+				events: new Set(["script.failed"]),
+			},
+			logger: silentLogger,
+			transport,
+		});
+
+		const eventA: WebhookEvent = { ...exampleEvent, subject: "manila" };
+		const eventB: WebhookEvent = { ...exampleEvent, subject: "cebu" };
+		dispatcher.emit(eventA);
+		dispatcher.emit(eventB);
+
+		expect(batches).toHaveLength(0);
+		advance(1000);
+		await dispatcher.flush();
+
+		expect(batches).toHaveLength(1);
+		expect(batches[0]).toHaveLength(2);
+		// biome-ignore lint/style/noNonNullAssertion: length asserted above
+		expect(batches[0]![0]!.subject).toBe("manila");
+		// biome-ignore lint/style/noNonNullAssertion: length asserted above
+		expect(batches[0]![1]!.subject).toBe("cebu");
+	});
+
+	test("does not coalesce events with different names", async () => {
+		let now = 0;
+		const timers: Array<{ at: number; fn: () => void }> = [];
+		const setTimer = (fn: () => void, ms: number) => {
+			const id = timers.length;
+			timers.push({ at: now + ms, fn });
+			return id as unknown as ReturnType<typeof setTimeout>;
+		};
+		const clearTimer = (id: ReturnType<typeof setTimeout>) => {
+			const index = id as unknown as number;
+			if (timers[index]) {
+				timers[index] = { at: Number.POSITIVE_INFINITY, fn: () => undefined };
+			}
+		};
+		const advance = (ms: number) => {
+			now += ms;
+			const due = timers.splice(0);
+			for (const t of due) {
+				if (t.at <= now) {
+					t.fn();
+				} else {
+					timers.push(t);
+				}
+			}
+		};
+
+		const { batches, transport } = createFakeTransport();
+		const dispatcher = new WebhookDispatcher({
+			clock: { clearTimer, now: () => now, setTimer },
+			config: {
+				coalesceWindowMs: 1000,
+				discordUrls: ["https://discord.com/api/webhooks/X"],
+				events: new Set(["script.failed", "origin.recovered"]),
+			},
+			logger: silentLogger,
+			transport,
+		});
+
+		dispatcher.emit(exampleEvent);
+		dispatcher.emit({
+			fields: {
+				devices: 4,
+				downForMs: 5_000,
+				lastScript: "restart",
+				result: "success",
+			},
+			name: "origin.recovered",
+			subject: "manila",
+		});
+
+		advance(1000);
+		await dispatcher.flush();
+
+		expect(batches).toHaveLength(2);
+	});
 });
