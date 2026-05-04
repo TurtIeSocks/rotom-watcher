@@ -340,6 +340,61 @@ const renderEmbed = (event: WebhookEvent, timestamp: string): DiscordEmbed => {
 	return renderer(event as never, timestamp);
 };
 
+// --- Coalesced batch rendering ---
+
+const SUBJECT_LIMIT = 20;
+
+const summaryFor = (name: EventName, count: number): string => {
+	switch (name) {
+		case "origin.offline.restart":
+			return `${count} origins entered offline state.`;
+		case "origin.offline.update":
+			return `${count} origins escalated to update mode.`;
+		case "origin.recovered":
+			return `${count} origins recovered.`;
+		case "script.failed":
+			return `${count} recovery scripts failed.`;
+		case "script.succeeded":
+			return `${count} recovery scripts succeeded.`;
+		case "script.timed_out":
+			return `${count} recovery scripts timed out.`;
+		case "poll.failed":
+			return `${count} polls failed.`;
+		case "device.duplicate_deleted":
+			return `${count} dead duplicates removed.`;
+		case "group.pipeline.triggered":
+			return `${count} group pipelines triggered.`;
+		default:
+			return `${count} events received.`;
+	}
+};
+
+const renderCoalesced = (
+	batch: WebhookEvent[],
+	timestamp: string,
+): DiscordEmbed => {
+	// biome-ignore lint/style/noNonNullAssertion: send guarantees length >= 1
+	const name = batch[0]!.name;
+	const severity = SEVERITY[name];
+	const uniqueSubjects = Array.from(
+		new Set(batch.map((event) => event.subject)),
+	);
+	const shown = uniqueSubjects.slice(0, SUBJECT_LIMIT);
+	const remaining = uniqueSubjects.length - shown.length;
+	const subjectsValue =
+		remaining > 0
+			? `${shown.join(", ")}, + ${remaining} more`
+			: shown.join(", ");
+
+	return {
+		color: SEVERITY_COLOR[severity],
+		description: summaryFor(name, batch.length),
+		fields: [{ name: "Subjects", value: subjectsValue }],
+		footer: { text: `coalesced batch • ${timestamp}` },
+		title: `${SEVERITY_LABEL[severity]} · ${name} (×${batch.length}) | multiple subjects`,
+	};
+};
+
 export class DiscordTransport implements WebhookTransport {
 	private readonly clock: DiscordTransportClock;
 	private readonly config: DiscordTransportConfig;
@@ -363,8 +418,11 @@ export class DiscordTransport implements WebhookTransport {
 		}
 
 		const timestamp = formatTimestamp(this.clock.now());
-		// biome-ignore lint/style/noNonNullAssertion: length asserted above
-		const embed = renderEmbed(batch[0]!, timestamp);
+		const embed =
+			batch.length === 1
+				? // biome-ignore lint/style/noNonNullAssertion: length asserted above
+					renderEmbed(batch[0]!, timestamp)
+				: renderCoalesced(batch, timestamp);
 		const body: DiscordWebhookBody = {
 			embeds: [embed],
 			username: this.config.username,

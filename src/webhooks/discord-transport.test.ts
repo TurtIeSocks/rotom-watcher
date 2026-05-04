@@ -161,3 +161,99 @@ describe("DiscordTransport.render (single events)", () => {
 		).rejects.toThrow(/503/);
 	});
 });
+
+describe("DiscordTransport.render (coalesced batches)", () => {
+	test("renders a single coalesced embed with subject list", async () => {
+		const { calls, fakeFetch } = captureFetch();
+		const transport = new DiscordTransport({
+			clock: { now: () => 1_700_000_000_000 },
+			config: baseConfig,
+			fetchImpl: fakeFetch,
+			logger: silentLogger,
+			sleepFn: async () => undefined,
+		});
+		const event = (subject: string): WebhookEvent => ({
+			fields: {
+				devices: 4,
+				lastSeenMs: 600_000,
+				mode: "update",
+				offlineStreak: 3,
+			},
+			name: "origin.offline.update",
+			subject,
+		});
+		await transport.send([event("manila"), event("cebu"), event("davao")]);
+		expect(calls).toHaveLength(1);
+		// biome-ignore lint/style/noNonNullAssertion: length asserted above
+		const body = JSON.parse(calls[0]!.init.body as string);
+		expect(body.embeds).toHaveLength(1);
+		const embed = body.embeds[0];
+		expect(embed.title).toContain("(×3)");
+		expect(embed.title).toContain("multiple subjects");
+		const subjectsField = embed.fields.find(
+			(f: { name: string }) => f.name === "Subjects",
+		);
+		expect(subjectsField.value).toContain("manila");
+		expect(subjectsField.value).toContain("cebu");
+		expect(subjectsField.value).toContain("davao");
+	});
+
+	test("truncates subject list past 20 entries with '+ N more'", async () => {
+		const { calls, fakeFetch } = captureFetch();
+		const transport = new DiscordTransport({
+			clock: { now: () => 1_700_000_000_000 },
+			config: baseConfig,
+			fetchImpl: fakeFetch,
+			logger: silentLogger,
+			sleepFn: async () => undefined,
+		});
+		const events: WebhookEvent[] = Array.from({ length: 25 }, (_, i) => ({
+			fields: {
+				devices: 1,
+				lastSeenMs: 60_000,
+				mode: "update",
+				offlineStreak: 1,
+			},
+			name: "origin.offline.update",
+			subject: `origin-${i.toString().padStart(2, "0")}`,
+		}));
+		await transport.send(events);
+		// biome-ignore lint/style/noNonNullAssertion: send always posts on non-empty
+		const body = JSON.parse(calls[0]!.init.body as string);
+		const subjectsField = body.embeds[0].fields.find(
+			(f: { name: string }) => f.name === "Subjects",
+		);
+		expect(subjectsField.value).toContain("+ 5 more");
+		expect(subjectsField.value).toContain("origin-19");
+		expect(subjectsField.value).not.toContain("origin-20");
+	});
+
+	test("deduplicates repeated subjects in coalesced batch", async () => {
+		const { calls, fakeFetch } = captureFetch();
+		const transport = new DiscordTransport({
+			clock: { now: () => 1_700_000_000_000 },
+			config: baseConfig,
+			fetchImpl: fakeFetch,
+			logger: silentLogger,
+			sleepFn: async () => undefined,
+		});
+		const event = (subject: string): WebhookEvent => ({
+			fields: {
+				devices: 1,
+				lastSeenMs: 60_000,
+				mode: "update",
+				offlineStreak: 1,
+			},
+			name: "origin.offline.update",
+			subject,
+		});
+		await transport.send([event("manila"), event("manila"), event("cebu")]);
+		// biome-ignore lint/style/noNonNullAssertion: send posted at least once
+		const body = JSON.parse(calls[0]!.init.body as string);
+		expect(body.embeds[0].title).toContain("(×3)");
+		const subjectsField = body.embeds[0].fields.find(
+			(f: { name: string }) => f.name === "Subjects",
+		);
+		expect(subjectsField.value.match(/manila/g)).toHaveLength(1);
+	});
+});
