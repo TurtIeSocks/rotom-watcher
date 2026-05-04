@@ -721,6 +721,7 @@ describe("DeviceMonitor", () => {
 			fields: {
 				devices: 0,
 				mode: "update",
+				offlineStreak: 3,
 			},
 			name: "origin.offline.update",
 			subject: "alpha",
