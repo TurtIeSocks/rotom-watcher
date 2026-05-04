@@ -4,6 +4,7 @@ import {
 	calculateRetryDelay,
 	fetchWithTimeout,
 	formatDuration,
+	generateRunId,
 	sanitizeOrigin,
 	sleep,
 	truncateOutput,
@@ -61,6 +62,13 @@ describe("formatDuration", () => {
 	test("formatDuration: minute+second values include both", () => {
 		expect(formatDuration(60_000)).toBe("1m 0s");
 		expect(formatDuration(252_000)).toBe("4m 12s");
+	});
+});
+
+describe("generateRunId", () => {
+	test("generateRunId returns a stable shape", () => {
+		const fixed = generateRunId(() => 0.5);
+		expect(fixed).toMatch(/^r-[0-9a-f]{4}$/);
 	});
 });
 

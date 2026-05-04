@@ -8,12 +8,23 @@ import type { Config, ConfigProvider } from "../config/schema";
 import type { ScriptMode } from "../monitor/types";
 import type { LoggerLike } from "../observability/logger";
 import { Metrics } from "../observability/metrics";
+import type { WebhookEvent } from "../webhooks/types";
 import { ScriptExecutionError, ScriptRunner } from "./script-runner";
 
 interface CapturedLog {
 	args: unknown[];
 	level: "debug" | "error" | "info" | "warn";
 }
+
+const createFakeDispatcher = () => {
+	const emitted: WebhookEvent[] = [];
+	return {
+		emit: (event: WebhookEvent) => {
+			emitted.push(event);
+		},
+		emitted,
+	};
+};
 
 const createLogger = (logs: CapturedLog[]): LoggerLike => ({
 	debug: (...args: unknown[]) => {
@@ -430,6 +441,99 @@ exit 1
 			{ origin: "x", scriptMode: "new" },
 			{ origin: "x", scriptMode: "update_all" },
 		]);
+	});
+
+	test("emits script.succeeded on successful run", async () => {
+		const logs: CapturedLog[] = [];
+		const directory = mkdtempSync(path.join(tmpdir(), "script-success-evt-"));
+		const scriptPath = writeExecutable(
+			directory,
+			"ok.sh",
+			"#!/bin/bash\nexit 0\n",
+		);
+		const config = createConfig(scriptPath);
+		const provider: ConfigProvider = { getConfig: () => config };
+		const dispatcher = createFakeDispatcher();
+		const runner = new ScriptRunner(
+			provider,
+			createLogger(logs),
+			new Metrics(),
+			async () => undefined,
+			() => 0.5,
+			undefined,
+			dispatcher,
+		);
+
+		await runner.execute("manila", "restart");
+
+		const success = dispatcher.emitted.find(
+			(e) => e.name === "script.succeeded",
+		);
+		expect(success).toBeDefined();
+		expect(success?.subject).toBe("manila");
+	});
+
+	test("emits script.failed on terminal failure", async () => {
+		const logs: CapturedLog[] = [];
+		const directory = mkdtempSync(path.join(tmpdir(), "script-fail-evt-"));
+		const scriptPath = writeExecutable(
+			directory,
+			"fail.sh",
+			"#!/bin/bash\nexit 1\n",
+		);
+		const config = { ...createConfig(scriptPath), maxRetries: 0 };
+		const provider: ConfigProvider = { getConfig: () => config };
+		const dispatcher = createFakeDispatcher();
+		const runner = new ScriptRunner(
+			provider,
+			createLogger(logs),
+			new Metrics(),
+			async () => undefined,
+			() => 0.5,
+			undefined,
+			dispatcher,
+		);
+
+		await expect(runner.execute("manila", "restart")).rejects.toBeInstanceOf(
+			ScriptExecutionError,
+		);
+		expect(dispatcher.emitted.some((e) => e.name === "script.failed")).toBe(
+			true,
+		);
+	});
+
+	test("emits script.timed_out when killed by timeout", async () => {
+		const logs: CapturedLog[] = [];
+		const directory = mkdtempSync(path.join(tmpdir(), "script-timeout-evt-"));
+		const scriptPath = writeExecutable(
+			directory,
+			"slow.sh",
+			"#!/bin/bash\nsleep 5\n",
+		);
+		// Tight timeout so the script is killed before exiting.
+		const config = {
+			...createConfig(scriptPath),
+			maxRetries: 0,
+			scriptTimeoutMs: 50,
+		};
+		const provider: ConfigProvider = { getConfig: () => config };
+		const dispatcher = createFakeDispatcher();
+		const runner = new ScriptRunner(
+			provider,
+			createLogger(logs),
+			new Metrics(),
+			async () => undefined,
+			() => 0.5,
+			undefined,
+			dispatcher,
+		);
+
+		await expect(runner.execute("manila", "restart")).rejects.toBeInstanceOf(
+			ScriptExecutionError,
+		);
+		expect(dispatcher.emitted.some((e) => e.name === "script.timed_out")).toBe(
+			true,
+		);
 	});
 });
 

@@ -82,7 +82,15 @@ const jobQueue = new JobQueue(
 	metrics,
 	{ stuckJobTimeoutMs },
 );
-const scriptRunner = new ScriptRunner(configManager, logger, metrics);
+const scriptRunner = new ScriptRunner(
+	configManager,
+	logger,
+	metrics,
+	undefined,
+	undefined,
+	undefined,
+	webhookDispatcher,
+);
 const statusApiClient = new RotomApiClient(configManager, metrics);
 const observabilityServer = new ObservabilityServer(
 	initialConfig.metricsHost,

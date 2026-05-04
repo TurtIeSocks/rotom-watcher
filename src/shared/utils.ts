@@ -105,3 +105,10 @@ export const formatDuration = (ms: number): string => {
 	}
 	return `${minutes}m ${seconds}s`;
 };
+
+export const generateRunId = (random: () => number = Math.random): string => {
+	const part = Math.floor(random() * 0xffffff)
+		.toString(16)
+		.padStart(6, "0");
+	return `r-${part.slice(0, 4)}`;
+};
