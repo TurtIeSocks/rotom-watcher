@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 
 import type { Config, ConfigProvider } from "../config/schema";
+import type { ScriptMode } from "../monitor/types";
 import type { LoggerLike } from "../observability/logger";
 import { Metrics } from "../observability/metrics";
 import { ScriptExecutionError, ScriptRunner } from "./script-runner";
@@ -69,10 +70,12 @@ const createConfig = (scriptPath: string): Config => ({
 	restartThreshold: 2,
 	rotomApiBaseUrl: "https://example.com/",
 	scriptKillGracePeriodMs: 1_000,
+	scriptNew: "-new",
 	scriptPath,
 	scriptRestart: "-rsc",
 	scriptTimeoutMs: 50,
 	scriptUpdate: "-usc",
+	scriptUpdateAll: "-u",
 	shutdownGracePeriodMs: 500,
 });
 
@@ -228,19 +231,25 @@ exit 1
 
 		expect(killCalls).toContain("SIGTERM");
 		expect(killCalls).toContain("SIGKILL");
-		expect(warnLogs.some((entry) => {
-			const details = entry.args[1] as string | undefined;
-			return typeof details === "string" && details.includes("SIGKILL");
-		})).toBe(true);
-		expect(errorLogs.some((entry) => {
-			const msg = entry.args[1] as string | undefined;
-			return typeof msg === "string" && msg.includes("abandoning child");
-		})).toBe(true);
+		expect(
+			warnLogs.some((entry) => {
+				const details = entry.args[1] as string | undefined;
+				return typeof details === "string" && details.includes("SIGKILL");
+			}),
+		).toBe(true);
+		expect(
+			errorLogs.some((entry) => {
+				const msg = entry.args[1] as string | undefined;
+				return typeof msg === "string" && msg.includes("abandoning child");
+			}),
+		).toBe(true);
 	}, 10_000);
 
 	test("settles the promise when the child exits naturally after SIGTERM", async () => {
 		const killCalls: string[] = [];
-		let closeHandler: ((code: number | null, signal: NodeJS.Signals | null) => void) | undefined;
+		let closeHandler:
+			| ((code: number | null, signal: NodeJS.Signals | null) => void)
+			| undefined;
 
 		const fakeSpawn = (() => {
 			const child = new EventEmitter() as EventEmitter & {
@@ -326,6 +335,91 @@ exit 1
 		await expect(runner.execute("alpha", "restart")).rejects.toMatchObject({
 			reason: "spawn_error",
 		});
+	});
+
+	test("executeGroupPipeline runs -new then -u in sequence", async () => {
+		const calls: Array<{ origin: string; scriptMode: ScriptMode }> = [];
+		const runner = new ScriptRunner(
+			createConfigProvider(createConfig("/tmp/ignored.sh")),
+			createLogger([]),
+			new Metrics(),
+			async () => undefined,
+			() => 0,
+		);
+
+		(
+			runner as unknown as {
+				execute: (origin: string, scriptMode: ScriptMode) => Promise<void>;
+			}
+		).execute = async (origin: string, scriptMode: ScriptMode) => {
+			calls.push({ origin, scriptMode });
+		};
+
+		await runner.executeGroupPipeline("x");
+
+		expect(calls).toEqual([
+			{ origin: "x", scriptMode: "new" },
+			{ origin: "x", scriptMode: "update_all" },
+		]);
+	});
+
+	test("executeGroupPipeline aborts and rejects when -new fails", async () => {
+		const calls: Array<{ origin: string; scriptMode: ScriptMode }> = [];
+		const runner = new ScriptRunner(
+			createConfigProvider(createConfig("/tmp/ignored.sh")),
+			createLogger([]),
+			new Metrics(),
+			async () => undefined,
+			() => 0,
+		);
+
+		(
+			runner as unknown as {
+				execute: (origin: string, scriptMode: ScriptMode) => Promise<void>;
+			}
+		).execute = async (origin: string, scriptMode: ScriptMode) => {
+			calls.push({ origin, scriptMode });
+			if (scriptMode === "new") {
+				throw new ScriptExecutionError("boom", "exit_code");
+			}
+		};
+
+		await expect(runner.executeGroupPipeline("x")).rejects.toBeInstanceOf(
+			ScriptExecutionError,
+		);
+
+		expect(calls).toEqual([{ origin: "x", scriptMode: "new" }]);
+	});
+
+	test("executeGroupPipeline rejects when -new succeeds but -u fails", async () => {
+		const calls: Array<{ origin: string; scriptMode: ScriptMode }> = [];
+		const runner = new ScriptRunner(
+			createConfigProvider(createConfig("/tmp/ignored.sh")),
+			createLogger([]),
+			new Metrics(),
+			async () => undefined,
+			() => 0,
+		);
+
+		(
+			runner as unknown as {
+				execute: (origin: string, scriptMode: ScriptMode) => Promise<void>;
+			}
+		).execute = async (origin: string, scriptMode: ScriptMode) => {
+			calls.push({ origin, scriptMode });
+			if (scriptMode === "update_all") {
+				throw new ScriptExecutionError("update failed", "timeout");
+			}
+		};
+
+		await expect(runner.executeGroupPipeline("x")).rejects.toMatchObject({
+			reason: "timeout",
+		});
+
+		expect(calls).toEqual([
+			{ origin: "x", scriptMode: "new" },
+			{ origin: "x", scriptMode: "update_all" },
+		]);
 	});
 });
 

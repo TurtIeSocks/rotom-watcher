@@ -49,7 +49,10 @@ describe("JobQueue", () => {
 
 		// First job never resolves — simulates a leaked promise that would
 		// otherwise pin "alpha" in `inProgress` forever.
-		const stuckJob = queue.add(() => new Promise<void>(() => undefined), "alpha");
+		const stuckJob = queue.add(
+			() => new Promise<void>(() => undefined),
+			"alpha",
+		);
 
 		// Wait past the watchdog to let it fire.
 		await new Promise<void>((resolve) => setTimeout(resolve, 80));

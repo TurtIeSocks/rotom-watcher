@@ -66,7 +66,9 @@ describe("loadTomlConfig", () => {
 			loadTomlConfig("/missing.toml", () => {
 				throw new Error("ENOENT: not found");
 			}),
-		).toThrow(/Failed to load TOML config at \/missing\.toml: ENOENT: not found/);
+		).toThrow(
+			/Failed to load TOML config at \/missing\.toml: ENOENT: not found/,
+		);
 	});
 
 	test("wraps non-Error throwables from the reader", () => {

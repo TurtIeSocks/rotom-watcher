@@ -125,10 +125,7 @@ export class DeviceMonitor {
 			);
 
 			if (duplicateDeletions.length > 0) {
-				if (
-					deletionCircuitBreaker &&
-					!deletionCircuitBreaker.canExecute()
-				) {
+				if (deletionCircuitBreaker && !deletionCircuitBreaker.canExecute()) {
 					logger.warn(
 						{
 							count: duplicateDeletions.length,
@@ -224,21 +221,18 @@ export class DeviceMonitor {
 					);
 
 					return jobQueue
-						.add(
-							() => {
-								// Re-read the script mode at execution time. If the
-								// job sat in the queue while subsequent polls
-								// incremented the offline counter past the restart
-								// threshold, we want to run the updated mode
-								// (typically `update`) instead of the stale one
-								// captured at queue time.
-								const currentMode = originStateTracker.getScriptMode(
-									decision.origin,
-								);
-								return scriptRunner.execute(decision.origin, currentMode);
-							},
-							decision.origin,
-						)
+						.add(() => {
+							// Re-read the script mode at execution time. If the
+							// job sat in the queue while subsequent polls
+							// incremented the offline counter past the restart
+							// threshold, we want to run the updated mode
+							// (typically `update`) instead of the stale one
+							// captured at queue time.
+							const currentMode = originStateTracker.getScriptMode(
+								decision.origin,
+							);
+							return scriptRunner.execute(decision.origin, currentMode);
+						}, decision.origin)
 						.catch((error: unknown) => {
 							logger.error(
 								{
@@ -251,6 +245,37 @@ export class DeviceMonitor {
 				});
 
 				await Promise.allSettled(jobs);
+			}
+
+			if (evaluation.groupDecisions.length > 0) {
+				logger.warn(
+					{
+						count: evaluation.groupDecisions.length,
+						prefixes: evaluation.groupDecisions.map((group) => group.prefix),
+					},
+					"Queueing fully-dead device groups for new+update_all pipeline",
+				);
+
+				const groupJobs = evaluation.groupDecisions.map((group) => {
+					metrics.recordGroupPipelineTriggered(group.prefix);
+					return jobQueue
+						.add(
+							() => scriptRunner.executeGroupPipeline(group.prefix),
+							`group:${group.prefix}`,
+						)
+						.catch((error: unknown) => {
+							logger.error(
+								{
+									error,
+									members: group.members,
+									prefix: group.prefix,
+								},
+								"Group pipeline exhausted retries",
+							);
+						});
+				});
+
+				await Promise.allSettled(groupJobs);
 			}
 
 			metrics.recordPollSuccess(now());

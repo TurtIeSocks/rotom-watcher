@@ -101,8 +101,22 @@ export class ScriptRunner {
 		}
 	}
 
+	async executeGroupPipeline(prefix: string): Promise<void> {
+		await this.execute(prefix, "new");
+		await this.execute(prefix, "update_all");
+	}
+
 	private resolveScriptArg(config: Config, scriptMode: ScriptMode): string {
-		return scriptMode === "update" ? config.scriptUpdate : config.scriptRestart;
+		switch (scriptMode) {
+			case "restart":
+				return config.scriptRestart;
+			case "update":
+				return config.scriptUpdate;
+			case "new":
+				return config.scriptNew;
+			case "update_all":
+				return config.scriptUpdateAll;
+		}
 	}
 
 	private runCommand(

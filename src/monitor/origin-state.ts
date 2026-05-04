@@ -47,10 +47,7 @@ export class OriginStateTracker {
 			}
 		}
 		if (removed > 0) {
-			this.logger?.info(
-				{ removed },
-				"Swept stale origin state entries (TTL)",
-			);
+			this.logger?.info({ removed }, "Swept stale origin state entries (TTL)");
 		}
 		return removed;
 	}

@@ -105,4 +105,67 @@ describe("createConfig", () => {
 			rotomApiBaseUrl: "https://env.example.com/",
 		});
 	});
+
+	test("defaults scriptNew to -new and scriptUpdateAll to -u", () => {
+		const config = createConfigFromSources({
+			env: {},
+			fileConfig: {
+				rotom_api: {
+					base_url: "https://example.com",
+				},
+			},
+		}) as {
+			scriptNew: string;
+			scriptUpdateAll: string;
+		};
+
+		expect(config.scriptNew).toBe("-new");
+		expect(config.scriptUpdateAll).toBe("-u");
+	});
+
+	test("env vars override TOML for scriptNew and scriptUpdateAll", () => {
+		const config = createConfigFromSources({
+			env: {
+				ROTOM_API_BASE_URL: "https://example.com",
+				SCRIPT_NEW_ARG: "-bootstrap",
+				SCRIPT_UPDATE_ALL_ARG: "-update-all",
+			},
+			fileConfig: {
+				scripts: {
+					new_arg: "-from-file",
+					update_all_arg: "-from-file",
+				},
+			},
+		}) as {
+			scriptNew: string;
+			scriptUpdateAll: string;
+		};
+
+		expect(config.scriptNew).toBe("-bootstrap");
+		expect(config.scriptUpdateAll).toBe("-update-all");
+	});
+
+	test("rejects empty SCRIPT_NEW_ARG and SCRIPT_UPDATE_ALL_ARG", () => {
+		expect(() =>
+			createConfigFromSources({
+				env: { ROTOM_API_BASE_URL: "https://example.com" },
+				fileConfig: {
+					scripts: {
+						new_arg: "",
+					},
+				},
+			}),
+		).toThrow(/SCRIPT_NEW_ARG/);
+
+		expect(() =>
+			createConfigFromSources({
+				env: { ROTOM_API_BASE_URL: "https://example.com" },
+				fileConfig: {
+					scripts: {
+						update_all_arg: "",
+					},
+				},
+			}),
+		).toThrow(/SCRIPT_UPDATE_ALL_ARG/);
+	});
 });
