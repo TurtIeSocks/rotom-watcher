@@ -1,3 +1,4 @@
+import packageJson from "../package.json" with { type: "json" };
 import { resolveConfigPath } from "./config/file";
 import { ConfigManager } from "./config/manager";
 import { DeviceMonitor } from "./monitor/device-monitor";
@@ -11,8 +12,6 @@ import { JobQueue } from "./runtime/job-queue";
 import { ScriptRunner } from "./runtime/script-runner";
 import { DiscordTransport } from "./webhooks/discord-transport";
 import { WebhookDispatcher } from "./webhooks/dispatcher";
-
-const ROTOM_WATCHER_VERSION = "0.1.0";
 
 const configManager = new ConfigManager({
 	configPath: resolveConfigPath(),
@@ -150,10 +149,12 @@ monitor.start();
 webhookDispatcher.emit({
 	fields: {
 		concurrency: initialConfig.maxConcurrentJobs,
+		// origins is a placeholder pending downstream wiring; a real count would
+		// require coordinating with the device monitor's first poll.
 		origins: 0,
 		pid: process.pid,
 		pollIntervalMs: initialConfig.checkIntervalMs,
-		version: ROTOM_WATCHER_VERSION,
+		version: packageJson.version,
 	},
 	name: "service.started",
 	subject: "rotom-watcher",
