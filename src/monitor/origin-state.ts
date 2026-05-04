@@ -63,6 +63,10 @@ export class OriginStateTracker {
 		this.states.delete(origin);
 		this.dispatcher?.emit({
 			fields: {
+				// `devices` and `downForMs` are placeholders: OriginState doesn't carry
+				// per-origin device counts or first-offline timestamps. Plumbing real
+				// values requires a separate refactor; the recovery signal itself is
+				// the operationally important part.
 				devices: 0,
 				downForMs: 0,
 				lastScript:

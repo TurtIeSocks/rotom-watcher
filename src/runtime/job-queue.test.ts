@@ -101,7 +101,7 @@ describe("JobQueue", () => {
 		const saturatedEvents = dispatcher.emitted.filter(
 			(e) => e.name === "queue.saturated",
 		);
-		expect(saturatedEvents.length).toBeGreaterThanOrEqual(1);
+		expect(saturatedEvents).toHaveLength(1);
 	});
 
 	test("reprocesses the queue after concurrency increases", async () => {
