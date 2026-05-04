@@ -38,6 +38,7 @@ const restartRequiredConfigKeys: Array<keyof Config> = [
 	"logFormat",
 	"metricsHost",
 	"metricsPort",
+	"webhooks",
 ];
 
 export class ConfigManager implements ConfigProvider {
