@@ -163,7 +163,7 @@ export class Metrics implements QueueStatusObserver {
 	});
 
 	private readonly groupPipelineTriggered = new Counter({
-		help: "Group recovery pipelines queued, labeled by prefix",
+		help: "Group recovery pipelines triggered per poll (counts intent to enqueue; in-flight prefixes get deduped at the queue but still increment), labeled by prefix",
 		labelNames: ["prefix"] as const,
 		name: "rotom_watcher_groups_pipeline_triggered_total",
 		registers: [this.registry],

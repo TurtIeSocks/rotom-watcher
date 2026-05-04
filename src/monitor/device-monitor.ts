@@ -257,9 +257,7 @@ export class DeviceMonitor {
 				logger.warn(
 					{
 						count: evaluation.groupDecisions.length,
-						prefixes: evaluation.groupDecisions.map(
-							(group) => group.prefix,
-						),
+						prefixes: evaluation.groupDecisions.map((group) => group.prefix),
 					},
 					"Queueing fully-dead device groups for new+update_all pipeline",
 				);
