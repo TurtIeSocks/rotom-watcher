@@ -1,4 +1,5 @@
 import type { LoggerLike } from "../observability/logger";
+import type { WebhookEmitter } from "../webhooks/types";
 
 type QueueJob = () => Promise<void>;
 
@@ -32,12 +33,14 @@ export class JobQueue {
 	private readonly queued: QueueJob[] = [];
 	private readonly running = new Set<QueueJob>();
 	private readonly stuckJobTimeoutMs: number;
+	private wasSaturated = false;
 
 	constructor(
 		concurrency: number,
 		private readonly logger: LoggerLike,
 		private readonly observer?: QueueStatusObserver,
 		options: JobQueueOptions = {},
+		private readonly dispatcher?: WebhookEmitter,
 	) {
 		this.concurrency = concurrency;
 		this.stuckJobTimeoutMs = options.stuckJobTimeoutMs ?? 0;
@@ -122,7 +125,24 @@ export class JobQueue {
 	}
 
 	private notifyStatusChanged(): void {
-		this.observer?.updateQueueStatus(this.getStatus());
+		const status = this.getStatus();
+		this.observer?.updateQueueStatus(status);
+
+		if (status.saturated && !this.wasSaturated) {
+			this.wasSaturated = true;
+			this.dispatcher?.emit({
+				fields: {
+					capacity: status.capacity,
+					queued: status.queued,
+					rejected: this.duplicateRejectedTotal,
+					running: status.running,
+				},
+				name: "queue.saturated",
+				subject: "job-queue",
+			});
+		} else if (!status.saturated && this.wasSaturated) {
+			this.wasSaturated = false;
+		}
 	}
 
 	private processQueue(): void {

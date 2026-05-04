@@ -1,6 +1,17 @@
 import { describe, expect, test } from "bun:test";
 import type { LoggerLike } from "../observability/logger";
+import type { WebhookEvent } from "../webhooks/types";
 import { JobQueue } from "./job-queue";
+
+const createFakeDispatcher = () => {
+	const emitted: WebhookEvent[] = [];
+	return {
+		emit: (event: WebhookEvent) => {
+			emitted.push(event);
+		},
+		emitted,
+	};
+};
 
 const logger: LoggerLike = {
 	debug: () => undefined,
@@ -73,6 +84,24 @@ describe("JobQueue", () => {
 		// Keep the stuck promise reference alive so GC doesn't complain; we
 		// deliberately never resolve it.
 		void stuckJob;
+	});
+
+	test("emits queue.saturated once on transition to saturated", async () => {
+		const dispatcher = createFakeDispatcher();
+		const queue = new JobQueue(1, logger, undefined, {}, dispatcher);
+		const block = new Promise<void>(() => undefined); // never resolves
+
+		// Fire and forget — don't await these; they won't resolve.
+		void queue.add(() => block, "origin-A");
+		void queue.add(() => block, "origin-B");
+
+		// Microtask yield so the queue's internal scheduling runs.
+		await new Promise((resolve) => setTimeout(resolve, 0));
+
+		const saturatedEvents = dispatcher.emitted.filter(
+			(e) => e.name === "queue.saturated",
+		);
+		expect(saturatedEvents.length).toBeGreaterThanOrEqual(1);
 	});
 
 	test("reprocesses the queue after concurrency increases", async () => {

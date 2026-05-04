@@ -82,6 +82,7 @@ const jobQueue = new JobQueue(
 	logger,
 	metrics,
 	{ stuckJobTimeoutMs },
+	webhookDispatcher,
 );
 const scriptRunner = new ScriptRunner(
 	configManager,
