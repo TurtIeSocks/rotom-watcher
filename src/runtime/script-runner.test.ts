@@ -534,6 +534,47 @@ exit 1
 		expect(dispatcher.emitted.some((e) => e.name === "script.timed_out")).toBe(
 			true,
 		);
+		expect(dispatcher.emitted.some((e) => e.name === "script.failed")).toBe(
+			true,
+		);
+	});
+
+	test("emits script.failed exactly once across retries", async () => {
+		const logs: CapturedLog[] = [];
+		const directory = mkdtempSync(path.join(tmpdir(), "script-retry-evt-"));
+		const scriptPath = writeExecutable(
+			directory,
+			"fail.sh",
+			"#!/bin/bash\nexit 1\n",
+		);
+		// 1 retry → 2 attempts; both fail.
+		const config = { ...createConfig(scriptPath), maxRetries: 1 };
+		const provider: ConfigProvider = { getConfig: () => config };
+		const dispatcher = createFakeDispatcher();
+		const runner = new ScriptRunner(
+			provider,
+			createLogger(logs),
+			new Metrics(),
+			async () => undefined,
+			() => 0.5,
+			undefined,
+			dispatcher,
+		);
+
+		await expect(runner.execute("manila", "restart")).rejects.toBeInstanceOf(
+			ScriptExecutionError,
+		);
+
+		const failedEvents = dispatcher.emitted.filter(
+			(e) => e.name === "script.failed",
+		);
+		expect(failedEvents).toHaveLength(1);
+		// The single emit should reflect the total attempts (initial + retry = 2).
+		// biome-ignore lint/style/noNonNullAssertion: length asserted above
+		expect(failedEvents[0]!).toMatchObject({
+			fields: { attempts: 2 },
+			subject: "manila",
+		});
 	});
 });
 
