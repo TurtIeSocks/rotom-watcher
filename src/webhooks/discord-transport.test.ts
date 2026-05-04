@@ -620,6 +620,82 @@ describe("DiscordTransport metrics", () => {
 			"4xx",
 		]);
 	});
+
+	test("records failed with reason '<reason>_exhausted' after retries", async () => {
+		const calls: { method: string; args: unknown[] }[] = [];
+		const metrics = {
+			recordWebhookDelivered: (...args: unknown[]) =>
+				calls.push({ args, method: "delivered" }),
+			recordWebhookFailed: (...args: unknown[]) =>
+				calls.push({ args, method: "failed" }),
+		};
+		const fakeFetch = (async () =>
+			new Response("oops", { status: 503 })) as unknown as typeof fetch;
+		const transport = new DiscordTransport({
+			clock: { now: () => 0 },
+			config: { ...baseConfig, retryAttempts: 1, retryInitialDelayMs: 1 },
+			fetchImpl: fakeFetch,
+			logger: silentLogger,
+			metrics,
+			sleepFn: async () => undefined,
+		});
+		await transport.send([
+			{
+				fields: {
+					attempts: 1,
+					durationMs: 1,
+					exitCode: 1,
+					mode: "restart",
+					runId: "r",
+				},
+				name: "script.failed",
+				subject: "x",
+			},
+		]);
+		expect(calls.find((c) => c.method === "failed")?.args).toEqual([
+			"script.failed",
+			"5xx_exhausted",
+		]);
+	});
+
+	test("normalizes network error reason on exhaustion", async () => {
+		const calls: { method: string; args: unknown[] }[] = [];
+		const metrics = {
+			recordWebhookDelivered: (...args: unknown[]) =>
+				calls.push({ args, method: "delivered" }),
+			recordWebhookFailed: (...args: unknown[]) =>
+				calls.push({ args, method: "failed" }),
+		};
+		const fakeFetch = (async () => {
+			throw new Error("specific connection error string");
+		}) as unknown as typeof fetch;
+		const transport = new DiscordTransport({
+			clock: { now: () => 0 },
+			config: { ...baseConfig, retryAttempts: 0 },
+			fetchImpl: fakeFetch,
+			logger: silentLogger,
+			metrics,
+			sleepFn: async () => undefined,
+		});
+		await transport.send([
+			{
+				fields: {
+					attempts: 1,
+					durationMs: 1,
+					exitCode: 1,
+					mode: "restart",
+					runId: "r",
+				},
+				name: "script.failed",
+				subject: "x",
+			},
+		]);
+		// The label should be the clean "network_exhausted", not "network: specific connection error string_exhausted".
+		expect(calls.find((c) => c.method === "failed")?.args).toEqual([
+			"script.failed",
+			"network_exhausted",
+		]);
+	});
 });
 
 describe("DiscordTransport.send (identity & mentions)", () => {

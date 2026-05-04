@@ -54,6 +54,9 @@ interface DiscordWebhookBody {
 
 const defaultClock: DiscordTransportClock = { now: () => Date.now() };
 
+const normalizeReasonForMetric = (reason: string): string =>
+	reason.startsWith("network:") ? "network" : reason;
+
 const formatTimestamp = (ms: number): string => {
 	const date = new Date(ms);
 	const yyyy = date.getUTCFullYear();
@@ -484,7 +487,10 @@ export class DiscordTransport implements WebhookTransport {
 				return;
 			}
 			if (!result.retryable) {
-				this.metrics.recordWebhookFailed(eventName, result.reason);
+				this.metrics.recordWebhookFailed(
+					eventName,
+					normalizeReasonForMetric(result.reason),
+				);
 				this.logger.warn(
 					{ reason: result.reason, status: result.status, url },
 					"Dropping webhook (non-retryable)",
@@ -494,7 +500,7 @@ export class DiscordTransport implements WebhookTransport {
 			if (attempt >= this.config.retryAttempts) {
 				this.metrics.recordWebhookFailed(
 					eventName,
-					`${result.reason}_exhausted`,
+					`${normalizeReasonForMetric(result.reason)}_exhausted`,
 				);
 				this.logger.error(
 					{ reason: result.reason, status: result.status, url },
