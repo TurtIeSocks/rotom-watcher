@@ -40,6 +40,8 @@ const circuitBreaker = new CircuitBreaker(
 	initialConfig.circuitBreakerThreshold,
 	initialConfig.circuitBreakerResetMs,
 	logger,
+	undefined,
+	webhookDispatcher,
 );
 // Dedicated breaker for device-deletion calls. A flaky delete endpoint
 // shouldn't block status fetches and thus freeze the recovery loop; and a
@@ -49,6 +51,8 @@ const deletionCircuitBreaker = new CircuitBreaker(
 	initialConfig.circuitBreakerThreshold,
 	initialConfig.circuitBreakerResetMs,
 	logger,
+	undefined,
+	webhookDispatcher,
 );
 const originStateTracker = new OriginStateTracker(
 	initialConfig.restartThreshold,

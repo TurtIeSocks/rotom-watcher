@@ -1,4 +1,5 @@
 import type { LoggerLike } from "../observability/logger";
+import type { WebhookEmitter } from "../webhooks/types";
 
 export type CircuitBreakerState = "CLOSED" | "HALF_OPEN" | "OPEN";
 
@@ -14,6 +15,7 @@ export class CircuitBreaker {
 		resetTimeMs: number,
 		private readonly logger: LoggerLike,
 		private readonly now: () => number = Date.now,
+		private readonly dispatcher?: WebhookEmitter,
 	) {
 		this.threshold = threshold;
 		this.resetTimeMs = resetTimeMs;
@@ -28,6 +30,11 @@ export class CircuitBreaker {
 		if (this.state === "OPEN" && this.now() >= this.nextAttempt) {
 			this.state = "HALF_OPEN";
 			this.logger.info("Circuit breaker entering HALF_OPEN state");
+			this.dispatcher?.emit({
+				fields: { resetMs: this.resetTimeMs },
+				name: "circuit_breaker.half_open",
+				subject: "rotom-api",
+			});
 			return true;
 		}
 
@@ -61,6 +68,15 @@ export class CircuitBreaker {
 				},
 				"Circuit breaker opened",
 			);
+			this.dispatcher?.emit({
+				fields: {
+					failures: this.failures,
+					resetMs: this.resetTimeMs,
+					threshold: this.threshold,
+				},
+				name: "circuit_breaker.opened",
+				subject: "rotom-api",
+			});
 		}
 	}
 
@@ -71,6 +87,11 @@ export class CircuitBreaker {
 
 		if (recoveredFrom !== "CLOSED") {
 			this.logger.info("Circuit breaker returned to CLOSED state");
+			this.dispatcher?.emit({
+				fields: {},
+				name: "circuit_breaker.closed",
+				subject: "rotom-api",
+			});
 		}
 	}
 }
