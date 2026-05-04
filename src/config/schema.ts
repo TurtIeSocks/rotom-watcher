@@ -226,6 +226,14 @@ const nonNegativeInteger = (name: string, defaultValue: number) =>
 			.gte(0, `${name} must be at least 0`),
 	);
 
+const isHttpsUrl = (value: string): boolean => {
+	try {
+		return new URL(value).protocol === "https:";
+	} catch {
+		return false;
+	}
+};
+
 const configSchema = z
 	.object({
 		CHECK_INTERVAL_MS: positiveInteger("CHECK_INTERVAL_MS", 300_000),
@@ -306,19 +314,12 @@ const configSchema = z
 		),
 		WEBHOOKS_AVATAR_URL: z.preprocess(
 			(value) => value ?? "",
-			z.string().refine(
-				(value) =>
-					value === "" ||
-					(() => {
-						try {
-							const url = new URL(value);
-							return url.protocol === "https:";
-						} catch {
-							return false;
-						}
-					})(),
-				"WEBHOOKS_AVATAR_URL must be empty or a valid HTTPS URL",
-			),
+			z
+				.string()
+				.refine(
+					(value) => value === "" || isHttpsUrl(value),
+					"WEBHOOKS_AVATAR_URL must be empty or a valid HTTPS URL",
+				),
 		),
 		WEBHOOKS_COALESCE_WINDOW_MS: nonNegativeInteger(
 			"WEBHOOKS_COALESCE_WINDOW_MS",
@@ -326,24 +327,16 @@ const configSchema = z
 		),
 		WEBHOOKS_DISCORD: z.preprocess(
 			(value) => splitCommaList(value) ?? [],
-			z
-				.array(
-					z
-						.string()
-						.url("WEBHOOKS_DISCORD entries must be valid URLs")
-						.refine((value) => {
-							try {
-								return new URL(value).protocol === "https:";
-							} catch {
-								return false;
-							}
-						}, "WEBHOOKS_DISCORD entries must use https"),
-				)
-				.default([]),
+			z.array(
+				z
+					.string()
+					.url("WEBHOOKS_DISCORD entries must be valid URLs")
+					.refine(isHttpsUrl, "WEBHOOKS_DISCORD entries must use https"),
+			),
 		),
 		WEBHOOKS_EVENTS: z.preprocess(
 			(value) => splitCommaList(value) ?? [],
-			z.array(z.enum(EVENT_NAMES)).default([]),
+			z.array(z.enum(EVENT_NAMES)),
 		),
 		WEBHOOKS_MENTION_ROLE_ID: z.preprocess(
 			(value) => value ?? "",

@@ -282,4 +282,46 @@ describe("createConfig", () => {
 		}) as unknown as Config;
 		expect(config.webhooks.coalesceWindowMs).toBe(0);
 	});
+
+	test("rejects non-HTTPS Discord URL in comma-split env var", () => {
+		expect(() =>
+			createConfigFromSources({
+				env: {
+					ROTOM_API_BASE_URL: "https://rotom.example.com",
+					WEBHOOKS_DISCORD: "http://discord.com/api/webhooks/X",
+				},
+			}),
+		).toThrow();
+	});
+
+	test("accepts WEBHOOKS_USERNAME at the 80-character boundary", () => {
+		const config = createConfigFromSources({
+			env: { ROTOM_API_BASE_URL: "https://rotom.example.com" },
+			fileConfig: {
+				webhooks: { username: "x".repeat(80) },
+			},
+		}) as unknown as Config;
+		expect(config.webhooks.username.length).toBe(80);
+	});
+
+	test("rejects WEBHOOKS_USERNAME at 81 characters", () => {
+		expect(() =>
+			createConfigFromSources({
+				env: { ROTOM_API_BASE_URL: "https://rotom.example.com" },
+				fileConfig: {
+					webhooks: { username: "x".repeat(81) },
+				},
+			}),
+		).toThrow();
+	});
+
+	test("accepts empty mention_role_id from file config", () => {
+		const config = createConfigFromSources({
+			env: { ROTOM_API_BASE_URL: "https://rotom.example.com" },
+			fileConfig: {
+				webhooks: { mention_role_id: "" },
+			},
+		}) as unknown as Config;
+		expect(config.webhooks.mentionRoleId).toBe("");
+	});
 });
