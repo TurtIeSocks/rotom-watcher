@@ -39,7 +39,7 @@ interface DiscordEmbed {
 }
 
 interface DiscordWebhookBody {
-	allowed_mentions?: { roles: string[] };
+	allowed_mentions?: { parse?: string[]; roles: string[] };
 	avatar_url?: string;
 	content?: string;
 	embeds: DiscordEmbed[];
@@ -440,11 +440,15 @@ export class DiscordTransport implements WebhookTransport {
 			body.avatar_url = this.config.avatarUrl;
 		}
 
+		// All events in a coalesced batch share the same name (dispatcher invariant).
 		// biome-ignore lint/style/noNonNullAssertion: length asserted above
 		const severity = SEVERITY[batch[0]!.name];
 		if (severity === "critical" && this.config.mentionRoleId !== "") {
 			body.content = `<@&${this.config.mentionRoleId}>`;
-			body.allowed_mentions = { roles: [this.config.mentionRoleId] };
+			body.allowed_mentions = {
+				parse: [],
+				roles: [this.config.mentionRoleId],
+			};
 		}
 
 		await Promise.all(

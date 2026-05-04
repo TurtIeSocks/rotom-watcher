@@ -573,7 +573,7 @@ describe("DiscordTransport.send (identity & mentions)", () => {
 		// biome-ignore lint/style/noNonNullAssertion: send posted
 		const body = JSON.parse(calls[0]!.init.body as string);
 		expect(body.content).toBe("<@&1234567890>");
-		expect(body.allowed_mentions).toEqual({ roles: ["1234567890"] });
+		expect(body.allowed_mentions).toEqual({ parse: [], roles: ["1234567890"] });
 	});
 
 	test("does not mention on non-critical events even with mentionRoleId set", async () => {
@@ -641,5 +641,33 @@ describe("DiscordTransport.send (identity & mentions)", () => {
 		// biome-ignore lint/style/noNonNullAssertion: send posted
 		const setBody = JSON.parse(setCalls[0]!.init.body as string);
 		expect(setBody.avatar_url).toBe("https://cdn.example/x.png");
+	});
+
+	test("does not mention on critical events when mentionRoleId is empty", async () => {
+		const { calls, fakeFetch } = captureFetch();
+		const transport = new DiscordTransport({
+			clock: { now: () => 0 },
+			config: { ...baseConfig, mentionRoleId: "" },
+			fetchImpl: fakeFetch,
+			logger: silentLogger,
+			sleepFn: async () => undefined,
+		});
+		await transport.send([
+			{
+				fields: {
+					attempts: 3,
+					durationMs: 1,
+					exitCode: 1,
+					mode: "restart",
+					runId: "r-1",
+				},
+				name: "script.failed",
+				subject: "manila",
+			},
+		]);
+		// biome-ignore lint/style/noNonNullAssertion: send posted
+		const body = JSON.parse(calls[0]!.init.body as string);
+		expect(body.content).toBeUndefined();
+		expect(body.allowed_mentions).toBeUndefined();
 	});
 });
