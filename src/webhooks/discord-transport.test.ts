@@ -255,5 +255,37 @@ describe("DiscordTransport.render (coalesced batches)", () => {
 			(f: { name: string }) => f.name === "Subjects",
 		);
 		expect(subjectsField.value.match(/manila/g)).toHaveLength(1);
+		expect(subjectsField.value).toContain("cebu");
+	});
+
+	test("clamps subjects field to Discord's 1024-char limit", async () => {
+		const { calls, fakeFetch } = captureFetch();
+		const transport = new DiscordTransport({
+			clock: { now: () => 1_700_000_000_000 },
+			config: baseConfig,
+			fetchImpl: fakeFetch,
+			logger: silentLogger,
+			sleepFn: async () => undefined,
+		});
+		// 20 subjects of 100 chars each → ~2000+ char field if unclamped.
+		const longSubject = (idx: number) => `${"x".repeat(100)}-${idx}`;
+		const events: WebhookEvent[] = Array.from({ length: 20 }, (_, i) => ({
+			fields: {
+				devices: 1,
+				lastSeenMs: 60_000,
+				mode: "update",
+				offlineStreak: 1,
+			},
+			name: "origin.offline.update",
+			subject: longSubject(i),
+		}));
+		await transport.send(events);
+		// biome-ignore lint/style/noNonNullAssertion: send posted at least once
+		const body = JSON.parse(calls[0]!.init.body as string);
+		const subjectsField = body.embeds[0].fields.find(
+			(f: { name: string }) => f.name === "Subjects",
+		);
+		expect(subjectsField.value.length).toBeLessThanOrEqual(1024);
+		expect(subjectsField.value.endsWith("...")).toBe(true);
 	});
 });

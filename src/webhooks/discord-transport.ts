@@ -343,6 +343,7 @@ const renderEmbed = (event: WebhookEvent, timestamp: string): DiscordEmbed => {
 // --- Coalesced batch rendering ---
 
 const SUBJECT_LIMIT = 20;
+const FIELD_VALUE_LIMIT = 1024;
 
 const summaryFor = (name: EventName, count: number): string => {
 	switch (name) {
@@ -365,6 +366,8 @@ const summaryFor = (name: EventName, count: number): string => {
 		case "group.pipeline.triggered":
 			return `${count} group pipelines triggered.`;
 		default:
+			// Singleton events (circuit_breaker.*, queue.saturated, service.*) should
+			// not realistically coalesce; this is a safety fallback.
 			return `${count} events received.`;
 	}
 };
@@ -373,6 +376,8 @@ const renderCoalesced = (
 	batch: WebhookEvent[],
 	timestamp: string,
 ): DiscordEmbed => {
+	// All events in a coalesced batch share the same name; guaranteed by WebhookDispatcher
+	// which buckets the buffer by EventName.
 	// biome-ignore lint/style/noNonNullAssertion: send guarantees length >= 1
 	const name = batch[0]!.name;
 	const severity = SEVERITY[name];
@@ -381,10 +386,13 @@ const renderCoalesced = (
 	);
 	const shown = uniqueSubjects.slice(0, SUBJECT_LIMIT);
 	const remaining = uniqueSubjects.length - shown.length;
-	const subjectsValue =
+	let subjectsValue =
 		remaining > 0
 			? `${shown.join(", ")}, + ${remaining} more`
 			: shown.join(", ");
+	if (subjectsValue.length > FIELD_VALUE_LIMIT) {
+		subjectsValue = `${subjectsValue.slice(0, FIELD_VALUE_LIMIT - 3)}...`;
+	}
 
 	return {
 		color: SEVERITY_COLOR[severity],
