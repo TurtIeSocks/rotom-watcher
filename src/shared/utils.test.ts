@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import {
 	calculateRetryDelay,
 	fetchWithTimeout,
+	formatDuration,
 	sanitizeOrigin,
 	sleep,
 	truncateOutput,
@@ -43,6 +44,23 @@ describe("truncateOutput", () => {
 describe("sleep", () => {
 	test("resolves after waiting", async () => {
 		await expect(sleep(0)).resolves.toBeUndefined();
+	});
+});
+
+describe("formatDuration", () => {
+	test("formatDuration: sub-second values render as ms", () => {
+		expect(formatDuration(0)).toBe("0ms");
+		expect(formatDuration(999)).toBe("999ms");
+	});
+
+	test("formatDuration: seconds-only values omit the minutes portion", () => {
+		expect(formatDuration(1_000)).toBe("1s");
+		expect(formatDuration(45_000)).toBe("45s");
+	});
+
+	test("formatDuration: minute+second values include both", () => {
+		expect(formatDuration(60_000)).toBe("1m 0s");
+		expect(formatDuration(252_000)).toBe("4m 12s");
 	});
 });
 
