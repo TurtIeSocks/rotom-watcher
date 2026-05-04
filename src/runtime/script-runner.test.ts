@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 
 import type { Config, ConfigProvider } from "../config/schema";
+import type { ScriptMode } from "../monitor/types";
 import type { LoggerLike } from "../observability/logger";
 import { Metrics } from "../observability/metrics";
 import { ScriptExecutionError, ScriptRunner } from "./script-runner";
@@ -328,6 +329,91 @@ exit 1
 		await expect(runner.execute("alpha", "restart")).rejects.toMatchObject({
 			reason: "spawn_error",
 		});
+	});
+
+	test("executeGroupPipeline runs -new then -u in sequence", async () => {
+		const calls: Array<{ origin: string; scriptMode: ScriptMode }> = [];
+		const runner = new ScriptRunner(
+			createConfigProvider(createConfig("/tmp/ignored.sh")),
+			createLogger([]),
+			new Metrics(),
+			async () => undefined,
+			() => 0,
+		);
+
+		(
+			runner as unknown as {
+				execute: (origin: string, scriptMode: ScriptMode) => Promise<void>;
+			}
+		).execute = async (origin: string, scriptMode: ScriptMode) => {
+			calls.push({ origin, scriptMode });
+		};
+
+		await runner.executeGroupPipeline("x");
+
+		expect(calls).toEqual([
+			{ origin: "x", scriptMode: "new" },
+			{ origin: "x", scriptMode: "update_all" },
+		]);
+	});
+
+	test("executeGroupPipeline aborts and rejects when -new fails", async () => {
+		const calls: Array<{ origin: string; scriptMode: ScriptMode }> = [];
+		const runner = new ScriptRunner(
+			createConfigProvider(createConfig("/tmp/ignored.sh")),
+			createLogger([]),
+			new Metrics(),
+			async () => undefined,
+			() => 0,
+		);
+
+		(
+			runner as unknown as {
+				execute: (origin: string, scriptMode: ScriptMode) => Promise<void>;
+			}
+		).execute = async (origin: string, scriptMode: ScriptMode) => {
+			calls.push({ origin, scriptMode });
+			if (scriptMode === "new") {
+				throw new ScriptExecutionError("boom", "exit_code");
+			}
+		};
+
+		await expect(runner.executeGroupPipeline("x")).rejects.toBeInstanceOf(
+			ScriptExecutionError,
+		);
+
+		expect(calls).toEqual([{ origin: "x", scriptMode: "new" }]);
+	});
+
+	test("executeGroupPipeline rejects when -new succeeds but -u fails", async () => {
+		const calls: Array<{ origin: string; scriptMode: ScriptMode }> = [];
+		const runner = new ScriptRunner(
+			createConfigProvider(createConfig("/tmp/ignored.sh")),
+			createLogger([]),
+			new Metrics(),
+			async () => undefined,
+			() => 0,
+		);
+
+		(
+			runner as unknown as {
+				execute: (origin: string, scriptMode: ScriptMode) => Promise<void>;
+			}
+		).execute = async (origin: string, scriptMode: ScriptMode) => {
+			calls.push({ origin, scriptMode });
+			if (scriptMode === "update_all") {
+				throw new ScriptExecutionError("update failed", "timeout");
+			}
+		};
+
+		await expect(runner.executeGroupPipeline("x")).rejects.toMatchObject({
+			reason: "timeout",
+		});
+
+		expect(calls).toEqual([
+			{ origin: "x", scriptMode: "new" },
+			{ origin: "x", scriptMode: "update_all" },
+		]);
 	});
 });
 

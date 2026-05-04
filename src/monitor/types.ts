@@ -27,7 +27,7 @@ export interface DeviceEvaluationResult {
 	originDecisions: OriginDecision[];
 }
 
-export type ScriptMode = "restart" | "update";
+export type ScriptMode = "restart" | "update" | "new" | "update_all";
 
 export interface OfflineAttemptResult {
 	origin: string;
