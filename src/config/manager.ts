@@ -202,10 +202,17 @@ export class ConfigManager implements ConfigProvider {
 	}
 }
 
+const serializeConfigValue = (value: unknown): string =>
+	JSON.stringify(value, (_key, val) =>
+		val instanceof Set ? [...val].sort() : val,
+	);
+
 const getChangedConfigKeys = (
 	previousConfig: Config,
 	nextConfig: Config,
 ): Array<keyof Config> =>
 	(Object.keys(previousConfig) as Array<keyof Config>).filter(
-		(key) => previousConfig[key] !== nextConfig[key],
+		(key) =>
+			serializeConfigValue(previousConfig[key]) !==
+			serializeConfigValue(nextConfig[key]),
 	);

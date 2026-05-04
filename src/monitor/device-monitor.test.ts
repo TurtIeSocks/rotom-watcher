@@ -80,6 +80,16 @@ const config: Config = {
 	scriptUpdate: "-usc",
 	scriptUpdateAll: "-u",
 	shutdownGracePeriodMs: 500,
+	webhooks: {
+		avatarUrl: "",
+		coalesceWindowMs: 10_000,
+		discordUrls: [],
+		events: new Set(),
+		mentionRoleId: "",
+		retryAttempts: 3,
+		retryInitialDelayMs: 500,
+		username: "rotom-watcher",
+	},
 };
 
 const logger: LoggerLike = {
