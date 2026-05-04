@@ -214,6 +214,64 @@ Example:
 - After:
   the top row answers "is rotom-watcher healthy right now?" and the lower panels answer "what part is going sideways?"
 
+## Discord Webhooks
+
+Optional. When enabled, `rotom-watcher` posts richly-formatted Discord embeds for selected events. Nothing is enabled by default — you opt in event-by-event.
+
+### Configuration
+
+```toml
+[webhooks]
+discord                = ["https://discord.com/api/webhooks/..."]
+events                 = ["origin.offline.update", "script.failed"]
+mention_role_id        = ""        # Discord role ID; pinged ONLY on Critical events
+coalesce_window_ms     = 10000     # 0 disables coalescing
+retry_attempts         = 3
+retry_initial_delay_ms = 500
+username               = "rotom-watcher"
+avatar_url             = ""
+```
+
+Environment variable equivalents (comma-separated for arrays): `WEBHOOKS_DISCORD`, `WEBHOOKS_EVENTS`, `WEBHOOKS_MENTION_ROLE_ID`, `WEBHOOKS_COALESCE_WINDOW_MS`, `WEBHOOKS_RETRY_ATTEMPTS`, `WEBHOOKS_RETRY_INITIAL_DELAY_MS`, `WEBHOOKS_USERNAME`, `WEBHOOKS_AVATAR_URL`.
+
+### Event reference
+
+| Event | Severity | Description |
+|---|---|---|
+| `circuit_breaker.opened` | 🔥 Critical | Rotom API failures hit threshold; circuit opened |
+| `origin.offline.update` | 🔥 Critical | Origin escalated to `update` after repeated restart failures |
+| `queue.saturated` | 🔥 Critical | Job queue full; transitioned to saturated state |
+| `script.failed` | 🔥 Critical | Recovery script exhausted retries |
+| `circuit_breaker.half_open` | ⚠️ Warning | Circuit testing recovery |
+| `origin.offline.restart` | ⚠️ Warning | Origin offline detected; running restart script |
+| `poll.failed` | ⚠️ Warning | A single Rotom API poll failed |
+| `script.timed_out` | ⚠️ Warning | Recovery script killed for exceeding timeout |
+| `circuit_breaker.closed` | ✅ Success | Circuit returned to healthy |
+| `origin.recovered` | ✅ Success | Origin came back online |
+| `script.succeeded` | ✅ Success | Recovery script completed OK |
+| `device.duplicate_deleted` | ℹ️ Info | Dead duplicate device cleaned up |
+| `group.pipeline.triggered` | ℹ️ Info | Group recovery pipeline kicked in |
+| `service.started` | ℹ️ Info | Service started |
+| `service.stopping` | ℹ️ Info | Graceful shutdown begun |
+
+### Behavior
+
+- **Routing**: every URL in `discord` receives every enabled event.
+- **Coalescing**: same-name events arriving within `coalesce_window_ms` are merged into one embed listing the affected subjects (up to 20, then `+ N more`).
+- **Mentions**: when `mention_role_id` is set, **Critical** events ping that role via Discord's `allowed_mentions` (no `@everyone`/other roles can leak).
+- **Retries**: 5xx, 429, network errors, and timeouts retry up to `retry_attempts` with exponential backoff (`retry_initial_delay_ms × 2^n`, capped at 30s). 429 honors `Retry-After`. Other 4xx drops without retry.
+- **Disable**: leave the section out, or set `discord = []` or `events = []`.
+
+### Metrics
+
+Three counters are exposed on the existing `/metrics` endpoint:
+
+| Metric | Labels |
+|---|---|
+| `rotom_watcher_webhook_events_delivered_total` | `event`, `severity` |
+| `rotom_watcher_webhook_events_failed_total` | `event`, `reason` (`5xx_exhausted`, `4xx`, `network_exhausted`, `429_exhausted`) |
+| `rotom_watcher_webhook_events_coalesced_total` | `event` |
+
 ## Failure Modes
 
 - Invalid startup config:
