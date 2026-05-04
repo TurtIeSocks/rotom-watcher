@@ -32,15 +32,17 @@ export class WebhookDispatcher {
 		if (!this.config.events.has(event.name)) {
 			return;
 		}
-		const promise = this.dispatch([event]);
-		this.pending.add(promise);
-		promise.finally(() => {
-			this.pending.delete(promise);
+
+		const tracked: Promise<void> = this.dispatch([event]).finally(() => {
+			this.pending.delete(tracked);
 		});
+		this.pending.add(tracked);
 	}
 
 	async flush(): Promise<void> {
-		await Promise.all(this.pending);
+		while (this.pending.size > 0) {
+			await Promise.all([...this.pending]);
+		}
 	}
 
 	private async dispatch(batch: WebhookEvent[]): Promise<void> {
@@ -48,7 +50,11 @@ export class WebhookDispatcher {
 			await this.transport.send(batch);
 		} catch (error) {
 			this.logger.error(
-				{ error, eventCount: batch.length },
+				{
+					error,
+					eventCount: batch.length,
+					eventNames: batch.map((event) => event.name),
+				},
 				"Webhook transport send failed",
 			);
 		}
