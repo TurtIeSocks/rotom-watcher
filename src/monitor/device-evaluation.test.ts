@@ -171,6 +171,232 @@ describe("evaluateDevices", () => {
 		]);
 	});
 
+	test("emits a groupDecision when every member of a prefix group is dead", () => {
+		const result = evaluateDevices({
+			currentTimeMs: 60_000,
+			deviceTimeoutMinutes: 10,
+			devices: [
+				buildDevice({
+					deviceId: "x.1-device",
+					isAlive: false,
+					origin: "x.1",
+				}),
+				buildDevice({
+					deviceId: "x.2-device",
+					isAlive: false,
+					origin: "x.2",
+				}),
+			],
+			workers: [],
+		});
+
+		expect(result.groupDecisions).toEqual([
+			{
+				members: ["x.1", "x.2"],
+				prefix: "x",
+			},
+		]);
+	});
+
+	test("does not emit a groupDecision when at least one member has an alive device", () => {
+		const result = evaluateDevices({
+			currentTimeMs: 60_000,
+			deviceTimeoutMinutes: 10,
+			devices: [
+				buildDevice({
+					deviceId: "x.1-device",
+					isAlive: false,
+					origin: "x.1",
+				}),
+				buildDevice({
+					deviceId: "x.2-device-a",
+					isAlive: false,
+					origin: "x.2",
+				}),
+				buildDevice({
+					deviceId: "x.2-device-b",
+					isAlive: true,
+					origin: "x.2",
+				}),
+			],
+			workers: [],
+		});
+
+		expect(result.groupDecisions).toEqual([]);
+	});
+
+	test("does not emit a groupDecision for a single-member group", () => {
+		const result = evaluateDevices({
+			currentTimeMs: 60_000,
+			deviceTimeoutMinutes: 10,
+			devices: [
+				buildDevice({
+					deviceId: "z.1-device",
+					isAlive: false,
+					origin: "z.1",
+				}),
+			],
+			workers: [],
+		});
+
+		expect(result.groupDecisions).toEqual([]);
+	});
+
+	test("does not group origins whose suffix after the last dot is not numeric", () => {
+		const result = evaluateDevices({
+			currentTimeMs: 60_000,
+			deviceTimeoutMinutes: 10,
+			devices: [
+				buildDevice({
+					deviceId: "foo.bar-device",
+					isAlive: false,
+					origin: "foo.bar",
+				}),
+				buildDevice({
+					deviceId: "foo.baz-device",
+					isAlive: false,
+					origin: "foo.baz",
+				}),
+			],
+			workers: [],
+		});
+
+		expect(result.groupDecisions).toEqual([]);
+	});
+
+	test("does not group origins that have no dot in their name", () => {
+		const result = evaluateDevices({
+			currentTimeMs: 60_000,
+			deviceTimeoutMinutes: 10,
+			devices: [
+				buildDevice({
+					deviceId: "solo-device-a",
+					isAlive: false,
+					origin: "solo",
+				}),
+				buildDevice({
+					deviceId: "solo-device-b",
+					isAlive: false,
+					origin: "single",
+				}),
+			],
+			workers: [],
+		});
+
+		expect(result.groupDecisions).toEqual([]);
+	});
+
+	test("clears shouldProcess and deadDuplicatesToDelete for members of a triggered group", () => {
+		const result = evaluateDevices({
+			currentTimeMs: 60_000,
+			deviceTimeoutMinutes: 10,
+			devices: [
+				buildDevice({
+					dateLastMessageReceived: 0,
+					deviceId: "x.1-device",
+					isAlive: false,
+					origin: "x.1",
+				}),
+				buildDevice({
+					dateLastMessageReceived: 0,
+					deviceId: "x.2-device",
+					isAlive: false,
+					origin: "x.2",
+				}),
+			],
+			workers: [],
+		});
+
+		expect(result.groupDecisions).toEqual([
+			{ members: ["x.1", "x.2"], prefix: "x" },
+		]);
+		for (const decision of result.originDecisions) {
+			expect(decision.shouldProcess).toBe(false);
+			expect(decision.deadDuplicatesToDelete).toEqual([]);
+		}
+	});
+
+	test("sorts groupDecisions by prefix and members within each group", () => {
+		const result = evaluateDevices({
+			currentTimeMs: 60_000,
+			deviceTimeoutMinutes: 10,
+			devices: [
+				buildDevice({
+					deviceId: "y.10-device",
+					isAlive: false,
+					origin: "y.10",
+				}),
+				buildDevice({
+					deviceId: "y.2-device",
+					isAlive: false,
+					origin: "y.2",
+				}),
+				buildDevice({
+					deviceId: "x.2-device",
+					isAlive: false,
+					origin: "x.2",
+				}),
+				buildDevice({
+					deviceId: "x.1-device",
+					isAlive: false,
+					origin: "x.1",
+				}),
+			],
+			workers: [],
+		});
+
+		expect(result.groupDecisions).toEqual([
+			{ members: ["x.1", "x.2"], prefix: "x" },
+			{ members: ["y.10", "y.2"], prefix: "y" },
+		]);
+	});
+
+	test("processes mixed groups: one qualifies, the other does not", () => {
+		const result = evaluateDevices({
+			currentTimeMs: 60_000,
+			deviceTimeoutMinutes: 10,
+			devices: [
+				buildDevice({
+					deviceId: "x.1-device",
+					isAlive: false,
+					origin: "x.1",
+				}),
+				buildDevice({
+					deviceId: "x.2-device",
+					isAlive: false,
+					origin: "x.2",
+				}),
+				buildDevice({
+					deviceId: "y.1-device",
+					isAlive: false,
+					origin: "y.1",
+				}),
+				buildDevice({
+					deviceId: "y.2-device",
+					isAlive: true,
+					origin: "y.2",
+				}),
+			],
+			workers: [],
+		});
+
+		expect(result.groupDecisions).toEqual([
+			{ members: ["x.1", "x.2"], prefix: "x" },
+		]);
+		const xMembers = result.originDecisions.filter((decision) =>
+			decision.origin.startsWith("x."),
+		);
+		expect(xMembers.every((decision) => decision.shouldProcess === false)).toBe(
+			true,
+		);
+		const yOnePerOrigin = result.originDecisions.find(
+			(decision) => decision.origin === "y.1",
+		);
+		// y.1 is not part of a triggered group, so it goes through the existing
+		// per-device path: no workers + no alive device -> shouldProcess = true.
+		expect(yOnePerOrigin?.shouldProcess).toBe(true);
+	});
+
 	test("sorts origin decisions and online origins across multiple origins", () => {
 		const result = evaluateDevices({
 			currentTimeMs: 60_000,

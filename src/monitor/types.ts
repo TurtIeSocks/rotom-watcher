@@ -22,7 +22,13 @@ export interface OriginDecision {
 	shouldProcess: boolean;
 }
 
+export interface GroupDecision {
+	members: string[];
+	prefix: string;
+}
+
 export interface DeviceEvaluationResult {
+	groupDecisions: GroupDecision[];
 	onlineOrigins: string[];
 	originDecisions: OriginDecision[];
 }
