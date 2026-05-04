@@ -73,6 +73,8 @@ reset_ms = 60000
 path = "../../oci.sh"
 restart_arg = "-rsc"
 update_arg = "-usc"
+new_arg = "-new"
+update_all_arg = "-u"
 timeout_ms = 300000
 restart_threshold = 2
 
@@ -106,6 +108,8 @@ Supported overrides:
 - `SCRIPT_PATH`
 - `SCRIPT_RESTART_ARG`
 - `SCRIPT_UPDATE_ARG`
+- `SCRIPT_NEW_ARG`
+- `SCRIPT_UPDATE_ALL_ARG`
 - `SCRIPT_TIMEOUT_MS`
 - `RESTART_THRESHOLD`
 - `LOG_LEVEL`
@@ -172,6 +176,7 @@ Important metrics:
 - `rotom_watcher_script_failures_total`
 - `rotom_watcher_script_duration_seconds`
 - `rotom_watcher_duplicate_deletions_total`
+- `rotom_watcher_groups_pipeline_triggered_total`
 - `rotom_watcher_queue_jobs_queued`
 - `rotom_watcher_queue_jobs_running`
 - `rotom_watcher_queue_duplicate_rejected_total`
@@ -223,6 +228,8 @@ Example:
   Script is terminated, failure metrics increment, and retry backoff applies until retries are exhausted.
 - Duplicate stale device rows:
   The monitor evaluates one origin decision instead of stacking multiple offline attempts in one poll.
+- Whole-group failure (every `<prefix>.<n>` device reports `isAlive=false`):
+  Per-device restart/update is suppressed for that prefix and a group pipeline runs `<script> -new <prefix>` followed (on success) by `<script> -u <prefix>`. Requires ≥2 members in the group; single-member prefixes use the per-device path.
 
 ## Operational Notes
 
