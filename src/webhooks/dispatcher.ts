@@ -1,6 +1,10 @@
 import type { LoggerLike } from "../observability/logger";
 import type { EventName, WebhookEvent, WebhookTransport } from "./types";
 
+export interface DispatcherMetrics {
+	recordWebhookCoalesced(event: string, count: number): void;
+}
+
 export interface DispatcherConfig {
 	coalesceWindowMs: number;
 	discordUrls: string[];
@@ -23,6 +27,7 @@ export interface WebhookDispatcherDeps {
 	clock?: DispatcherClock;
 	config: DispatcherConfig;
 	logger: LoggerLike;
+	metrics?: DispatcherMetrics;
 	transport: WebhookTransport;
 }
 
@@ -36,6 +41,7 @@ export class WebhookDispatcher {
 	private readonly clock: DispatcherClock;
 	private readonly config: DispatcherConfig;
 	private readonly logger: LoggerLike;
+	private readonly metrics: DispatcherMetrics;
 	private readonly pending = new Set<Promise<void>>();
 	private readonly transport: WebhookTransport;
 
@@ -43,6 +49,9 @@ export class WebhookDispatcher {
 		this.clock = deps.clock ?? defaultClock;
 		this.config = deps.config;
 		this.logger = deps.logger;
+		this.metrics = deps.metrics ?? {
+			recordWebhookCoalesced: () => undefined,
+		};
 		this.transport = deps.transport;
 	}
 
@@ -89,6 +98,10 @@ export class WebhookDispatcher {
 	}
 
 	private trackDispatch(batch: WebhookEvent[]): void {
+		if (batch.length > 1) {
+			// biome-ignore lint/style/noNonNullAssertion: length > 1 guarantees [0]
+			this.metrics.recordWebhookCoalesced(batch[0]!.name, batch.length - 1);
+		}
 		const tracked: Promise<void> = this.dispatch(batch).finally(() => {
 			this.pending.delete(tracked);
 		});

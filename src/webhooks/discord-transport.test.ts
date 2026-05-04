@@ -547,6 +547,81 @@ describe("DiscordTransport.send (retry)", () => {
 	});
 });
 
+describe("DiscordTransport metrics", () => {
+	test("records delivered on success", async () => {
+		const calls: { method: string; args: unknown[] }[] = [];
+		const metrics = {
+			recordWebhookDelivered: (...args: unknown[]) =>
+				calls.push({ args, method: "delivered" }),
+			recordWebhookFailed: (...args: unknown[]) =>
+				calls.push({ args, method: "failed" }),
+		};
+		const fakeFetch = (async () =>
+			new Response("", { status: 204 })) as unknown as typeof fetch;
+		const transport = new DiscordTransport({
+			clock: { now: () => 0 },
+			config: baseConfig,
+			fetchImpl: fakeFetch,
+			logger: silentLogger,
+			metrics,
+			sleepFn: async () => undefined,
+		});
+		await transport.send([
+			{
+				fields: {
+					attempts: 1,
+					durationMs: 1,
+					exitCode: 1,
+					mode: "restart",
+					runId: "r",
+				},
+				name: "script.failed",
+				subject: "x",
+			},
+		]);
+		expect(calls).toEqual([
+			{ args: ["script.failed", "critical"], method: "delivered" },
+		]);
+	});
+
+	test("records failed with reason on 4xx", async () => {
+		const calls: { method: string; args: unknown[] }[] = [];
+		const metrics = {
+			recordWebhookDelivered: (...args: unknown[]) =>
+				calls.push({ args, method: "delivered" }),
+			recordWebhookFailed: (...args: unknown[]) =>
+				calls.push({ args, method: "failed" }),
+		};
+		const fakeFetch = (async () =>
+			new Response("bad", { status: 400 })) as unknown as typeof fetch;
+		const transport = new DiscordTransport({
+			clock: { now: () => 0 },
+			config: baseConfig,
+			fetchImpl: fakeFetch,
+			logger: silentLogger,
+			metrics,
+			sleepFn: async () => undefined,
+		});
+		await transport.send([
+			{
+				fields: {
+					attempts: 1,
+					durationMs: 1,
+					exitCode: 1,
+					mode: "restart",
+					runId: "r",
+				},
+				name: "script.failed",
+				subject: "x",
+			},
+		]);
+		expect(calls.find((c) => c.method === "failed")?.args).toEqual([
+			"script.failed",
+			"4xx",
+		]);
+	});
+});
+
 describe("DiscordTransport.send (identity & mentions)", () => {
 	test("includes content + allowed_mentions for critical events when mentionRoleId set", async () => {
 		const { calls, fakeFetch } = captureFetch();

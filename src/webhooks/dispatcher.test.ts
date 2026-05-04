@@ -165,6 +165,49 @@ describe("WebhookDispatcher (filtering)", () => {
 		expect(batches[0]![1]!.subject).toBe("cebu");
 	});
 
+	test("records coalesced count = batch size - 1", async () => {
+		let now = 0;
+		const timers: Array<{ at: number; fn: () => void }> = [];
+		const setTimer = (fn: () => void, ms: number) => {
+			const id = timers.length;
+			timers.push({ at: now + ms, fn });
+			return id as unknown as ReturnType<typeof setTimeout>;
+		};
+		const advance = (ms: number) => {
+			now += ms;
+			const due = timers.splice(0);
+			for (const t of due) {
+				if (t.at <= now) t.fn();
+				else timers.push(t);
+			}
+		};
+
+		const coalescedCalls: Array<[string, number]> = [];
+		const { transport } = createFakeTransport();
+		const dispatcher = new WebhookDispatcher({
+			clock: { clearTimer: () => undefined, now: () => now, setTimer },
+			config: {
+				coalesceWindowMs: 1000,
+				discordUrls: ["https://discord.com/api/webhooks/X"],
+				events: new Set(["script.failed"]),
+			},
+			logger: silentLogger,
+			metrics: {
+				recordWebhookCoalesced: (event, count) =>
+					coalescedCalls.push([event, count]),
+			},
+			transport,
+		});
+
+		dispatcher.emit(exampleEvent);
+		dispatcher.emit(exampleEvent);
+		dispatcher.emit(exampleEvent);
+		advance(1000);
+		await dispatcher.flush();
+
+		expect(coalescedCalls).toEqual([["script.failed", 2]]);
+	});
+
 	test("does not coalesce events with different names", async () => {
 		let now = 0;
 		const timers: Array<{ at: number; fn: () => void }> = [];

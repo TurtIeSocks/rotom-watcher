@@ -9,6 +9,11 @@ import type {
 	WebhookTransport,
 } from "./types";
 
+export interface WebhookMetrics {
+	recordWebhookDelivered(event: string, severity: string): void;
+	recordWebhookFailed(event: string, reason: string): void;
+}
+
 export interface DiscordTransportConfig {
 	avatarUrl: string;
 	discordUrls: string[];
@@ -27,6 +32,7 @@ export interface DiscordTransportDeps {
 	config: DiscordTransportConfig;
 	fetchImpl?: typeof fetch;
 	logger: LoggerLike;
+	metrics?: WebhookMetrics;
 	sleepFn?: (ms: number) => Promise<void>;
 }
 
@@ -409,6 +415,7 @@ export class DiscordTransport implements WebhookTransport {
 	private readonly config: DiscordTransportConfig;
 	private readonly fetchImpl: typeof fetch;
 	private readonly logger: LoggerLike;
+	private readonly metrics: WebhookMetrics;
 	private readonly sleepFn: (ms: number) => Promise<void>;
 
 	constructor(deps: DiscordTransportDeps) {
@@ -416,6 +423,10 @@ export class DiscordTransport implements WebhookTransport {
 		this.config = deps.config;
 		this.fetchImpl = deps.fetchImpl ?? fetch;
 		this.logger = deps.logger;
+		this.metrics = deps.metrics ?? {
+			recordWebhookDelivered: () => undefined,
+			recordWebhookFailed: () => undefined,
+		};
 		this.sleepFn =
 			deps.sleepFn ??
 			((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
@@ -442,7 +453,8 @@ export class DiscordTransport implements WebhookTransport {
 
 		// All events in a coalesced batch share the same name (dispatcher invariant).
 		// biome-ignore lint/style/noNonNullAssertion: length asserted above
-		const severity = SEVERITY[batch[0]!.name];
+		const eventName = batch[0]!.name;
+		const severity = SEVERITY[eventName];
 		if (severity === "critical" && this.config.mentionRoleId !== "") {
 			body.content = `<@&${this.config.mentionRoleId}>`;
 			body.allowed_mentions = {
@@ -452,21 +464,27 @@ export class DiscordTransport implements WebhookTransport {
 		}
 
 		await Promise.all(
-			this.config.discordUrls.map((url) => this.postWithRetry(url, body)),
+			this.config.discordUrls.map((url) =>
+				this.postWithRetry(url, body, eventName, severity),
+			),
 		);
 	}
 
 	private async postWithRetry(
 		url: string,
 		body: DiscordWebhookBody,
+		eventName: string,
+		severity: string,
 	): Promise<void> {
 		let attempt = 0;
 		while (true) {
 			const result = await this.tryPost(url, body);
 			if (result.ok) {
+				this.metrics.recordWebhookDelivered(eventName, severity);
 				return;
 			}
 			if (!result.retryable) {
+				this.metrics.recordWebhookFailed(eventName, result.reason);
 				this.logger.warn(
 					{ reason: result.reason, status: result.status, url },
 					"Dropping webhook (non-retryable)",
@@ -474,6 +492,10 @@ export class DiscordTransport implements WebhookTransport {
 				return;
 			}
 			if (attempt >= this.config.retryAttempts) {
+				this.metrics.recordWebhookFailed(
+					eventName,
+					`${result.reason}_exhausted`,
+				);
 				this.logger.error(
 					{ reason: result.reason, status: result.status, url },
 					"Dropping webhook after exhausting retries",
