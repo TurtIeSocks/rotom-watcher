@@ -546,3 +546,100 @@ describe("DiscordTransport.send (retry)", () => {
 		expect(sleeps).toEqual([20_000, 30_000, 30_000]);
 	});
 });
+
+describe("DiscordTransport.send (identity & mentions)", () => {
+	test("includes content + allowed_mentions for critical events when mentionRoleId set", async () => {
+		const { calls, fakeFetch } = captureFetch();
+		const transport = new DiscordTransport({
+			clock: { now: () => 0 },
+			config: { ...baseConfig, mentionRoleId: "1234567890" },
+			fetchImpl: fakeFetch,
+			logger: silentLogger,
+			sleepFn: async () => undefined,
+		});
+		await transport.send([
+			{
+				fields: {
+					attempts: 3,
+					durationMs: 1,
+					exitCode: 1,
+					mode: "restart",
+					runId: "r-1",
+				},
+				name: "script.failed",
+				subject: "manila",
+			},
+		]);
+		// biome-ignore lint/style/noNonNullAssertion: send posted
+		const body = JSON.parse(calls[0]!.init.body as string);
+		expect(body.content).toBe("<@&1234567890>");
+		expect(body.allowed_mentions).toEqual({ roles: ["1234567890"] });
+	});
+
+	test("does not mention on non-critical events even with mentionRoleId set", async () => {
+		const { calls, fakeFetch } = captureFetch();
+		const transport = new DiscordTransport({
+			clock: { now: () => 0 },
+			config: { ...baseConfig, mentionRoleId: "1234567890" },
+			fetchImpl: fakeFetch,
+			logger: silentLogger,
+			sleepFn: async () => undefined,
+		});
+		await transport.send([
+			{
+				fields: {
+					devices: 4,
+					downForMs: 100,
+					lastScript: "restart",
+					result: "success",
+				},
+				name: "origin.recovered",
+				subject: "cebu",
+			},
+		]);
+		// biome-ignore lint/style/noNonNullAssertion: send posted
+		const body = JSON.parse(calls[0]!.init.body as string);
+		expect(body.content).toBeUndefined();
+		expect(body.allowed_mentions).toBeUndefined();
+	});
+
+	test("omits avatar_url when empty, includes when set", async () => {
+		const { calls: emptyCalls, fakeFetch: emptyFetch } = captureFetch();
+		const emptyTransport = new DiscordTransport({
+			clock: { now: () => 0 },
+			config: baseConfig,
+			fetchImpl: emptyFetch,
+			logger: silentLogger,
+			sleepFn: async () => undefined,
+		});
+		await emptyTransport.send([
+			{
+				fields: { failures: 5, resetMs: 60_000, threshold: 5 },
+				name: "circuit_breaker.opened",
+				subject: "rotom-api",
+			},
+		]);
+		// biome-ignore lint/style/noNonNullAssertion: send posted
+		const emptyBody = JSON.parse(emptyCalls[0]!.init.body as string);
+		expect(emptyBody.avatar_url).toBeUndefined();
+
+		const { calls: setCalls, fakeFetch: setFetch } = captureFetch();
+		const setTransport = new DiscordTransport({
+			clock: { now: () => 0 },
+			config: { ...baseConfig, avatarUrl: "https://cdn.example/x.png" },
+			fetchImpl: setFetch,
+			logger: silentLogger,
+			sleepFn: async () => undefined,
+		});
+		await setTransport.send([
+			{
+				fields: { failures: 5, resetMs: 60_000, threshold: 5 },
+				name: "circuit_breaker.opened",
+				subject: "rotom-api",
+			},
+		]);
+		// biome-ignore lint/style/noNonNullAssertion: send posted
+		const setBody = JSON.parse(setCalls[0]!.init.body as string);
+		expect(setBody.avatar_url).toBe("https://cdn.example/x.png");
+	});
+});

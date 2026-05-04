@@ -440,6 +440,13 @@ export class DiscordTransport implements WebhookTransport {
 			body.avatar_url = this.config.avatarUrl;
 		}
 
+		// biome-ignore lint/style/noNonNullAssertion: length asserted above
+		const severity = SEVERITY[batch[0]!.name];
+		if (severity === "critical" && this.config.mentionRoleId !== "") {
+			body.content = `<@&${this.config.mentionRoleId}>`;
+			body.allowed_mentions = { roles: [this.config.mentionRoleId] };
+		}
+
 		await Promise.all(
 			this.config.discordUrls.map((url) => this.postWithRetry(url, body)),
 		);
