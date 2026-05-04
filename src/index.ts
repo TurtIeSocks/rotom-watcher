@@ -54,8 +54,7 @@ const originStateTracker = new OriginStateTracker(
 // full retry budget) so that a leaked in-progress entry is still eventually
 // released, but legitimate long retries aren't killed.
 const stuckJobTimeoutMs =
-	initialConfig.scriptTimeoutMs *
-		(initialConfig.maxRetries + 1) +
+	initialConfig.scriptTimeoutMs * (initialConfig.maxRetries + 1) +
 	initialConfig.maxRetryDelayMs * (initialConfig.maxRetries + 1) +
 	initialConfig.scriptKillGracePeriodMs * 2 +
 	30_000;

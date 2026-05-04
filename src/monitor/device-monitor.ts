@@ -125,10 +125,7 @@ export class DeviceMonitor {
 			);
 
 			if (duplicateDeletions.length > 0) {
-				if (
-					deletionCircuitBreaker &&
-					!deletionCircuitBreaker.canExecute()
-				) {
+				if (deletionCircuitBreaker && !deletionCircuitBreaker.canExecute()) {
 					logger.warn(
 						{
 							count: duplicateDeletions.length,
@@ -224,21 +221,18 @@ export class DeviceMonitor {
 					);
 
 					return jobQueue
-						.add(
-							() => {
-								// Re-read the script mode at execution time. If the
-								// job sat in the queue while subsequent polls
-								// incremented the offline counter past the restart
-								// threshold, we want to run the updated mode
-								// (typically `update`) instead of the stale one
-								// captured at queue time.
-								const currentMode = originStateTracker.getScriptMode(
-									decision.origin,
-								);
-								return scriptRunner.execute(decision.origin, currentMode);
-							},
-							decision.origin,
-						)
+						.add(() => {
+							// Re-read the script mode at execution time. If the
+							// job sat in the queue while subsequent polls
+							// incremented the offline counter past the restart
+							// threshold, we want to run the updated mode
+							// (typically `update`) instead of the stale one
+							// captured at queue time.
+							const currentMode = originStateTracker.getScriptMode(
+								decision.origin,
+							);
+							return scriptRunner.execute(decision.origin, currentMode);
+						}, decision.origin)
 						.catch((error: unknown) => {
 							logger.error(
 								{

@@ -231,19 +231,25 @@ exit 1
 
 		expect(killCalls).toContain("SIGTERM");
 		expect(killCalls).toContain("SIGKILL");
-		expect(warnLogs.some((entry) => {
-			const details = entry.args[1] as string | undefined;
-			return typeof details === "string" && details.includes("SIGKILL");
-		})).toBe(true);
-		expect(errorLogs.some((entry) => {
-			const msg = entry.args[1] as string | undefined;
-			return typeof msg === "string" && msg.includes("abandoning child");
-		})).toBe(true);
+		expect(
+			warnLogs.some((entry) => {
+				const details = entry.args[1] as string | undefined;
+				return typeof details === "string" && details.includes("SIGKILL");
+			}),
+		).toBe(true);
+		expect(
+			errorLogs.some((entry) => {
+				const msg = entry.args[1] as string | undefined;
+				return typeof msg === "string" && msg.includes("abandoning child");
+			}),
+		).toBe(true);
 	}, 10_000);
 
 	test("settles the promise when the child exits naturally after SIGTERM", async () => {
 		const killCalls: string[] = [];
-		let closeHandler: ((code: number | null, signal: NodeJS.Signals | null) => void) | undefined;
+		let closeHandler:
+			| ((code: number | null, signal: NodeJS.Signals | null) => void)
+			| undefined;
 
 		const fakeSpawn = (() => {
 			const child = new EventEmitter() as EventEmitter & {
