@@ -66,6 +66,7 @@ const originStateTracker = new OriginStateTracker(
 			initialConfig.checkIntervalMs * 100,
 		),
 	},
+	webhookDispatcher,
 );
 // Hard ceiling on how long a single job may hold an origin slot. Set well
 // above the worst-case script execution path (timeout + SIGKILL escalation +
