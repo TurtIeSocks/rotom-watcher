@@ -9,6 +9,10 @@ import { RotomApiClient } from "./rotom/client";
 import { CircuitBreaker } from "./runtime/circuit-breaker";
 import { JobQueue } from "./runtime/job-queue";
 import { ScriptRunner } from "./runtime/script-runner";
+import { DiscordTransport } from "./webhooks/discord-transport";
+import { WebhookDispatcher } from "./webhooks/dispatcher";
+
+const ROTOM_WATCHER_VERSION = "0.1.0";
 
 const configManager = new ConfigManager({
 	configPath: resolveConfigPath(),
@@ -22,6 +26,17 @@ const logger = createLogger({
 configManager.setLogger(logger);
 
 const metrics = new Metrics();
+const discordTransport = new DiscordTransport({
+	config: initialConfig.webhooks,
+	logger,
+	metrics,
+});
+const webhookDispatcher = new WebhookDispatcher({
+	config: initialConfig.webhooks,
+	logger,
+	metrics,
+	transport: discordTransport,
+});
 const circuitBreaker = new CircuitBreaker(
 	initialConfig.circuitBreakerThreshold,
 	initialConfig.circuitBreakerResetMs,
@@ -109,7 +124,18 @@ const monitor = new DeviceMonitor({
 	jobQueue,
 	logger,
 	metrics,
-	onShutdown: async () => {
+	onShutdown: async (signal: string) => {
+		const queueStatus = jobQueue.getStatus();
+		webhookDispatcher.emit({
+			fields: {
+				queuedJobs: queueStatus.queued,
+				reason: signal,
+				runningJobs: queueStatus.running,
+			},
+			name: "service.stopping",
+			subject: "rotom-watcher",
+		});
+		await webhookDispatcher.flush();
 		configManager.close();
 		observabilityServer.stop();
 	},
@@ -121,3 +147,14 @@ const monitor = new DeviceMonitor({
 observabilityServer.start();
 configManager.startWatching();
 monitor.start();
+webhookDispatcher.emit({
+	fields: {
+		concurrency: initialConfig.maxConcurrentJobs,
+		origins: 0,
+		pid: process.pid,
+		pollIntervalMs: initialConfig.checkIntervalMs,
+		version: ROTOM_WATCHER_VERSION,
+	},
+	name: "service.started",
+	subject: "rotom-watcher",
+});
