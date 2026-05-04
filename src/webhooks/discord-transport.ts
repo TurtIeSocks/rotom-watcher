@@ -343,6 +343,7 @@ const renderEmbed = (event: WebhookEvent, timestamp: string): DiscordEmbed => {
 // --- Coalesced batch rendering ---
 
 const SUBJECT_LIMIT = 20;
+const MAX_RETRY_DELAY_MS = 30_000;
 const FIELD_VALUE_LIMIT = 1024;
 
 const summaryFor = (name: EventName, count: number): string => {
@@ -469,7 +470,11 @@ export class DiscordTransport implements WebhookTransport {
 				return;
 			}
 			const delay =
-				result.retryAfterMs ?? this.config.retryInitialDelayMs * 2 ** attempt;
+				result.retryAfterMs ??
+				Math.min(
+					this.config.retryInitialDelayMs * 2 ** attempt,
+					MAX_RETRY_DELAY_MS,
+				);
 			await this.sleepFn(delay);
 			attempt += 1;
 		}
@@ -499,9 +504,10 @@ export class DiscordTransport implements WebhookTransport {
 			}
 			if (response.status === 429) {
 				const retryAfter = response.headers.get("retry-after");
+				const parsed = retryAfter !== null ? Number(retryAfter) : Number.NaN;
 				const retryAfterMs =
-					retryAfter !== null
-						? Math.round(Number(retryAfter) * 1000)
+					Number.isFinite(parsed) && parsed >= 0
+						? Math.round(parsed * 1000)
 						: undefined;
 				return {
 					ok: false,

@@ -468,4 +468,81 @@ describe("DiscordTransport.send (retry)", () => {
 		]);
 		expect(Math.max(...seenInFlight)).toBe(2);
 	});
+
+	test("ignores non-numeric Retry-After header (HTTP-date or garbage)", async () => {
+		let calls = 0;
+		const responses = [
+			new Response("rate limited", {
+				headers: { "retry-after": "Thu, 01 Jan 2026 00:00:00 GMT" },
+				status: 429,
+			}),
+			new Response("", { status: 204 }),
+		];
+		const fakeFetch = (async () => {
+			// biome-ignore lint/style/noNonNullAssertion: indexed by call count
+			const response = responses[calls]!;
+			calls += 1;
+			return response;
+		}) as unknown as typeof fetch;
+		const sleeps: number[] = [];
+		const transport = new DiscordTransport({
+			clock: { now: () => 0 },
+			config: { ...baseConfig, retryAttempts: 3, retryInitialDelayMs: 25 },
+			fetchImpl: fakeFetch,
+			logger: silentLogger,
+			sleepFn: async (ms) => {
+				sleeps.push(ms);
+			},
+		});
+		await transport.send([
+			{
+				fields: {
+					attempts: 1,
+					durationMs: 1,
+					exitCode: 1,
+					mode: "restart",
+					runId: "r-1",
+				},
+				name: "script.failed",
+				subject: "x",
+			},
+		]);
+		// Falls back to exponential backoff: 25ms (initial * 2^0).
+		expect(sleeps).toEqual([25]);
+	});
+
+	test("caps exponential backoff at MAX_RETRY_DELAY_MS", async () => {
+		let calls = 0;
+		const fakeFetch = (async () => {
+			calls += 1;
+			return new Response("oops", { status: 503 });
+		}) as unknown as typeof fetch;
+		const sleeps: number[] = [];
+		const transport = new DiscordTransport({
+			clock: { now: () => 0 },
+			// Initial delay 20s. 2^0=20s, 2^1=40s (would exceed cap), 2^2=80s.
+			// All clamped to 30_000ms ceiling.
+			config: { ...baseConfig, retryAttempts: 3, retryInitialDelayMs: 20_000 },
+			fetchImpl: fakeFetch,
+			logger: silentLogger,
+			sleepFn: async (ms) => {
+				sleeps.push(ms);
+			},
+		});
+		await transport.send([
+			{
+				fields: {
+					attempts: 1,
+					durationMs: 1,
+					exitCode: 1,
+					mode: "restart",
+					runId: "r-1",
+				},
+				name: "script.failed",
+				subject: "x",
+			},
+		]);
+		expect(calls).toBe(4);
+		expect(sleeps).toEqual([20_000, 30_000, 30_000]);
+	});
 });
