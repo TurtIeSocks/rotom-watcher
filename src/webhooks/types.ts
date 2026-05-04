@@ -22,10 +22,10 @@ export type EventName =
 export type WebhookEvent =
 	| {
 			fields: {
+				attempt: number;
 				devices: number;
 				lastSeenMs: number;
 				mode: "restart";
-				attempt: number;
 			};
 			name: "origin.offline.restart";
 			subject: string;

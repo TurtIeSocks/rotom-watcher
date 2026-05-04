@@ -5,7 +5,7 @@ import {
 	SEVERITY_COLOR,
 	SEVERITY_LABEL,
 } from "./events";
-import type { EventName, Severity } from "./types";
+import type { Severity } from "./types";
 
 describe("event catalog", () => {
 	test("EVENT_NAMES has no duplicates", () => {
@@ -28,8 +28,7 @@ describe("event catalog", () => {
 		}
 	});
 
-	test("EVENT_NAMES type is exhaustive over EventName", () => {
-		const names: readonly EventName[] = EVENT_NAMES;
-		expect(names.length).toBeGreaterThan(0);
+	test("EVENT_NAMES has the expected count (update when adding events)", () => {
+		expect(EVENT_NAMES.length).toBe(15);
 	});
 });
