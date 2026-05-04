@@ -440,24 +440,94 @@ export class DiscordTransport implements WebhookTransport {
 		}
 
 		await Promise.all(
-			this.config.discordUrls.map((url) => this.postOnce(url, body)),
+			this.config.discordUrls.map((url) => this.postWithRetry(url, body)),
 		);
 	}
 
-	private async postOnce(url: string, body: DiscordWebhookBody): Promise<void> {
-		const response = await this.fetchImpl(url, {
-			body: JSON.stringify(body),
-			headers: { "content-type": "application/json" },
-			method: "POST",
-		});
-		if (!response.ok) {
-			this.logger.warn(
-				{ status: response.status, url },
-				"Discord webhook POST returned non-2xx",
-			);
-			throw new Error(
-				`Discord webhook POST failed with status ${response.status}`,
-			);
+	private async postWithRetry(
+		url: string,
+		body: DiscordWebhookBody,
+	): Promise<void> {
+		let attempt = 0;
+		while (true) {
+			const result = await this.tryPost(url, body);
+			if (result.ok) {
+				return;
+			}
+			if (!result.retryable) {
+				this.logger.warn(
+					{ reason: result.reason, status: result.status, url },
+					"Dropping webhook (non-retryable)",
+				);
+				return;
+			}
+			if (attempt >= this.config.retryAttempts) {
+				this.logger.error(
+					{ reason: result.reason, status: result.status, url },
+					"Dropping webhook after exhausting retries",
+				);
+				return;
+			}
+			const delay =
+				result.retryAfterMs ?? this.config.retryInitialDelayMs * 2 ** attempt;
+			await this.sleepFn(delay);
+			attempt += 1;
+		}
+	}
+
+	private async tryPost(
+		url: string,
+		body: DiscordWebhookBody,
+	): Promise<
+		| { ok: true }
+		| {
+				ok: false;
+				reason: string;
+				retryable: boolean;
+				retryAfterMs?: number;
+				status?: number;
+		  }
+	> {
+		try {
+			const response = await this.fetchImpl(url, {
+				body: JSON.stringify(body),
+				headers: { "content-type": "application/json" },
+				method: "POST",
+			});
+			if (response.ok) {
+				return { ok: true };
+			}
+			if (response.status === 429) {
+				const retryAfter = response.headers.get("retry-after");
+				const retryAfterMs =
+					retryAfter !== null
+						? Math.round(Number(retryAfter) * 1000)
+						: undefined;
+				return {
+					ok: false,
+					reason: "429",
+					retryable: true,
+					retryAfterMs,
+					status: 429,
+				};
+			}
+			if (response.status >= 500) {
+				return {
+					ok: false,
+					reason: "5xx",
+					retryable: true,
+					status: response.status,
+				};
+			}
+			return {
+				ok: false,
+				reason: "4xx",
+				retryable: false,
+				status: response.status,
+			};
+		} catch (error) {
+			const message = error instanceof Error ? error.message : "unknown";
+			return { ok: false, reason: `network: ${message}`, retryable: true };
 		}
 	}
 }

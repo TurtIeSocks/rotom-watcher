@@ -134,31 +134,34 @@ describe("DiscordTransport.render (single events)", () => {
 		expect(body.embeds).toHaveLength(1);
 	});
 
-	test("rejects on non-2xx response", async () => {
-		const fakeFetch = (async () =>
-			new Response("oops", { status: 503 })) as unknown as typeof fetch;
+	test("drops on non-2xx response (no throw)", async () => {
+		let calls = 0;
+		const fakeFetch = (async () => {
+			calls += 1;
+			return new Response("oops", { status: 503 });
+		}) as unknown as typeof fetch;
 		const transport = new DiscordTransport({
 			clock: { now: () => 0 },
-			config: baseConfig,
+			config: { ...baseConfig, retryAttempts: 0 },
 			fetchImpl: fakeFetch,
 			logger: silentLogger,
 			sleepFn: async () => undefined,
 		});
-		await expect(
-			transport.send([
-				{
-					fields: {
-						attempts: 1,
-						durationMs: 1,
-						exitCode: 1,
-						mode: "restart",
-						runId: "r-1",
-					},
-					name: "script.failed",
-					subject: "x",
+		// Should NOT throw — retry path logs and drops.
+		await transport.send([
+			{
+				fields: {
+					attempts: 1,
+					durationMs: 1,
+					exitCode: 1,
+					mode: "restart",
+					runId: "r-1",
 				},
-			]),
-		).rejects.toThrow(/503/);
+				name: "script.failed",
+				subject: "x",
+			},
+		]);
+		expect(calls).toBe(1);
 	});
 });
 
@@ -287,5 +290,182 @@ describe("DiscordTransport.render (coalesced batches)", () => {
 		);
 		expect(subjectsField.value.length).toBeLessThanOrEqual(1024);
 		expect(subjectsField.value.endsWith("...")).toBe(true);
+	});
+});
+
+describe("DiscordTransport.send (retry)", () => {
+	test("retries on 5xx up to retryAttempts then gives up", async () => {
+		let calls = 0;
+		const fakeFetch = (async () => {
+			calls += 1;
+			return new Response("oops", { status: 503 });
+		}) as unknown as typeof fetch;
+		const sleeps: number[] = [];
+		const transport = new DiscordTransport({
+			clock: { now: () => 0 },
+			config: { ...baseConfig, retryAttempts: 2, retryInitialDelayMs: 10 },
+			fetchImpl: fakeFetch,
+			logger: silentLogger,
+			sleepFn: async (ms) => {
+				sleeps.push(ms);
+			},
+		});
+		await transport.send([
+			{
+				fields: {
+					attempts: 1,
+					durationMs: 1,
+					exitCode: 1,
+					mode: "restart",
+					runId: "r-1",
+				},
+				name: "script.failed",
+				subject: "x",
+			},
+		]);
+		expect(calls).toBe(3);
+		expect(sleeps).toEqual([10, 20]);
+	});
+
+	test("4xx (non-429) does not retry", async () => {
+		let calls = 0;
+		const fakeFetch = (async () => {
+			calls += 1;
+			return new Response("bad", { status: 400 });
+		}) as unknown as typeof fetch;
+		const transport = new DiscordTransport({
+			clock: { now: () => 0 },
+			config: { ...baseConfig, retryAttempts: 5, retryInitialDelayMs: 10 },
+			fetchImpl: fakeFetch,
+			logger: silentLogger,
+			sleepFn: async () => undefined,
+		});
+		await transport.send([
+			{
+				fields: {
+					attempts: 1,
+					durationMs: 1,
+					exitCode: 1,
+					mode: "restart",
+					runId: "r-1",
+				},
+				name: "script.failed",
+				subject: "x",
+			},
+		]);
+		expect(calls).toBe(1);
+	});
+
+	test("429 with Retry-After header honors header instead of backoff", async () => {
+		let calls = 0;
+		const responses = [
+			new Response("rate limited", {
+				headers: { "retry-after": "0.5" },
+				status: 429,
+			}),
+			new Response("", { status: 204 }),
+		];
+		const fakeFetch = (async () => {
+			// biome-ignore lint/style/noNonNullAssertion: indexed by call count
+			const response = responses[calls]!;
+			calls += 1;
+			return response;
+		}) as unknown as typeof fetch;
+		const sleeps: number[] = [];
+		const transport = new DiscordTransport({
+			clock: { now: () => 0 },
+			config: { ...baseConfig, retryAttempts: 3, retryInitialDelayMs: 10 },
+			fetchImpl: fakeFetch,
+			logger: silentLogger,
+			sleepFn: async (ms) => {
+				sleeps.push(ms);
+			},
+		});
+		await transport.send([
+			{
+				fields: {
+					attempts: 1,
+					durationMs: 1,
+					exitCode: 1,
+					mode: "restart",
+					runId: "r-1",
+				},
+				name: "script.failed",
+				subject: "x",
+			},
+		]);
+		expect(calls).toBe(2);
+		expect(sleeps).toEqual([500]);
+	});
+
+	test("network error retries", async () => {
+		let calls = 0;
+		const fakeFetch = (async () => {
+			calls += 1;
+			if (calls < 3) {
+				throw new Error("network down");
+			}
+			return new Response("", { status: 204 });
+		}) as unknown as typeof fetch;
+		const transport = new DiscordTransport({
+			clock: { now: () => 0 },
+			config: { ...baseConfig, retryAttempts: 3, retryInitialDelayMs: 5 },
+			fetchImpl: fakeFetch,
+			logger: silentLogger,
+			sleepFn: async () => undefined,
+		});
+		await transport.send([
+			{
+				fields: {
+					attempts: 1,
+					durationMs: 1,
+					exitCode: 1,
+					mode: "restart",
+					runId: "r-1",
+				},
+				name: "script.failed",
+				subject: "x",
+			},
+		]);
+		expect(calls).toBe(3);
+	});
+
+	test("posts to all discordUrls in parallel", async () => {
+		const inFlight = new Set<string>();
+		const seenInFlight: number[] = [];
+		const fakeFetch = (async (url: string) => {
+			inFlight.add(url);
+			seenInFlight.push(inFlight.size);
+			await new Promise((resolve) => setTimeout(resolve, 1));
+			inFlight.delete(url);
+			return new Response("", { status: 204 });
+		}) as unknown as typeof fetch;
+		const transport = new DiscordTransport({
+			clock: { now: () => 0 },
+			config: {
+				...baseConfig,
+				discordUrls: [
+					"https://discord.com/api/webhooks/A",
+					"https://discord.com/api/webhooks/B",
+				],
+			},
+			fetchImpl: fakeFetch,
+			logger: silentLogger,
+			sleepFn: async () => undefined,
+		});
+		await transport.send([
+			{
+				fields: {
+					attempts: 1,
+					durationMs: 1,
+					exitCode: 1,
+					mode: "restart",
+					runId: "r-1",
+				},
+				name: "script.failed",
+				subject: "x",
+			},
+		]);
+		expect(Math.max(...seenInFlight)).toBe(2);
 	});
 });
