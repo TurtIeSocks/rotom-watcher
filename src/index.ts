@@ -132,8 +132,9 @@ configManager.subscribe(({ changedKeys, config }) => {
 
 const monitor = new DeviceMonitor({
 	circuitBreaker,
-	deletionCircuitBreaker,
 	configProvider: configManager,
+	deletionCircuitBreaker,
+	dispatcher: webhookDispatcher,
 	jobQueue,
 	logger,
 	metrics,

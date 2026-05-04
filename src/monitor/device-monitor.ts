@@ -6,11 +6,13 @@ import type { CircuitBreaker } from "../runtime/circuit-breaker";
 import type { JobQueue } from "../runtime/job-queue";
 import type { ScriptRunner } from "../runtime/script-runner";
 import { sleep } from "../shared/utils";
+import type { WebhookEmitter } from "../webhooks/types";
 import { evaluateDevices } from "./device-evaluation";
 import type { OriginStateTracker } from "./origin-state";
 
 export interface DeviceMonitorDependencies {
 	circuitBreaker: CircuitBreaker;
+	configProvider: ConfigProvider;
 	/**
 	 * Optional dedicated breaker for delete-device calls. Keeping this
 	 * separate from the fetch-status breaker means a flaky deletion endpoint
@@ -21,7 +23,7 @@ export interface DeviceMonitorDependencies {
 	 * breaker allows.
 	 */
 	deletionCircuitBreaker?: CircuitBreaker;
-	configProvider: ConfigProvider;
+	dispatcher?: WebhookEmitter;
 	jobQueue: JobQueue;
 	logger: LoggerLike;
 	metrics: Metrics;
@@ -169,6 +171,11 @@ export class DeviceMonitor {
 								},
 								"Deleted dead duplicate device",
 							);
+							this.dependencies.dispatcher?.emit({
+								fields: { deviceId: device.deviceId, origin: device.origin },
+								name: "device.duplicate_deleted",
+								subject: device.origin,
+							});
 						} catch (error: unknown) {
 							metrics.recordDuplicateDeletion("failure");
 							deletionCircuitBreaker?.recordFailure();
@@ -220,6 +227,32 @@ export class DeviceMonitor {
 						"Scheduling recovery script for offline origin",
 					);
 
+					if (offlineAttempt.scriptMode === "update") {
+						this.dependencies.dispatcher?.emit({
+							fields: {
+								// OriginDecision does not carry a device count; use 0 as placeholder
+								devices: 0,
+								lastSeenMs: decision.lastSeenMinutes * 60_000,
+								mode: "update",
+								offlineStreak: offlineAttempt.state.successiveOfflineCount,
+							},
+							name: "origin.offline.update",
+							subject: decision.origin,
+						});
+					} else {
+						this.dependencies.dispatcher?.emit({
+							fields: {
+								attempt: offlineAttempt.state.successiveOfflineCount,
+								// OriginDecision does not carry a device count; use 0 as placeholder
+								devices: 0,
+								lastSeenMs: decision.lastSeenMinutes * 60_000,
+								mode: "restart",
+							},
+							name: "origin.offline.restart",
+							subject: decision.origin,
+						});
+					}
+
 					return jobQueue
 						.add(() => {
 							// Re-read the script mode at execution time. If the
@@ -258,6 +291,14 @@ export class DeviceMonitor {
 
 				const groupJobs = evaluation.groupDecisions.map((group) => {
 					metrics.recordGroupPipelineTriggered(group.prefix);
+					this.dependencies.dispatcher?.emit({
+						fields: {
+							groupSize: group.members.length,
+							trigger: "fully-dead-group",
+						},
+						name: "group.pipeline.triggered",
+						subject: group.prefix,
+					});
 					return jobQueue
 						.add(
 							() => scriptRunner.executeGroupPipeline(group.prefix),
@@ -295,6 +336,14 @@ export class DeviceMonitor {
 				},
 				"Device poll failed",
 			);
+			this.dependencies.dispatcher?.emit({
+				fields: {
+					durationMs: now() - pollStartedAt,
+					reason: error instanceof Error ? error.message : "unknown",
+				},
+				name: "poll.failed",
+				subject: "rotom-api",
+			});
 		} finally {
 			metrics.recordPollDuration(now() - pollStartedAt);
 			metrics.updateOriginState(originStateTracker.getStats());
