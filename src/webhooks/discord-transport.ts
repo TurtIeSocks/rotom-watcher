@@ -379,10 +379,19 @@ export class DiscordTransport implements WebhookTransport {
 	}
 
 	private async postOnce(url: string, body: DiscordWebhookBody): Promise<void> {
-		await this.fetchImpl(url, {
+		const response = await this.fetchImpl(url, {
 			body: JSON.stringify(body),
 			headers: { "content-type": "application/json" },
 			method: "POST",
 		});
+		if (!response.ok) {
+			this.logger.warn(
+				{ status: response.status, url },
+				"Discord webhook POST returned non-2xx",
+			);
+			throw new Error(
+				`Discord webhook POST failed with status ${response.status}`,
+			);
+		}
 	}
 }

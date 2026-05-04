@@ -133,4 +133,31 @@ describe("DiscordTransport.render (single events)", () => {
 		});
 		expect(body.embeds).toHaveLength(1);
 	});
+
+	test("rejects on non-2xx response", async () => {
+		const fakeFetch = (async () =>
+			new Response("oops", { status: 503 })) as unknown as typeof fetch;
+		const transport = new DiscordTransport({
+			clock: { now: () => 0 },
+			config: baseConfig,
+			fetchImpl: fakeFetch,
+			logger: silentLogger,
+			sleepFn: async () => undefined,
+		});
+		await expect(
+			transport.send([
+				{
+					fields: {
+						attempts: 1,
+						durationMs: 1,
+						exitCode: 1,
+						mode: "restart",
+						runId: "r-1",
+					},
+					name: "script.failed",
+					subject: "x",
+				},
+			]),
+		).rejects.toThrow(/503/);
+	});
 });
