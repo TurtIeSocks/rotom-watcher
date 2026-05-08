@@ -169,6 +169,27 @@ export class Metrics implements QueueStatusObserver {
 		registers: [this.registry],
 	});
 
+	private readonly webhookCoalesced = new Counter({
+		help: "Webhook events merged into a coalesced batch (events past the first per batch)",
+		labelNames: ["event"] as const,
+		name: "rotom_watcher_webhook_events_coalesced_total",
+		registers: [this.registry],
+	});
+
+	private readonly webhookDelivered = new Counter({
+		help: "Webhook batches successfully delivered, by event name and severity",
+		labelNames: ["event", "severity"] as const,
+		name: "rotom_watcher_webhook_events_delivered_total",
+		registers: [this.registry],
+	});
+
+	private readonly webhookFailed = new Counter({
+		help: "Webhook delivery failures, by event name and reason",
+		labelNames: ["event", "reason"] as const,
+		name: "rotom_watcher_webhook_events_failed_total",
+		registers: [this.registry],
+	});
+
 	constructor() {
 		collectDefaultMetrics({
 			prefix: "rotom_watcher_process_",
@@ -286,6 +307,18 @@ export class Metrics implements QueueStatusObserver {
 		this.groupPipelineTriggered.inc({
 			prefix,
 		});
+	}
+
+	recordWebhookCoalesced(event: string, count: number): void {
+		this.webhookCoalesced.inc({ event }, count);
+	}
+
+	recordWebhookDelivered(event: string, severity: string): void {
+		this.webhookDelivered.inc({ event, severity });
+	}
+
+	recordWebhookFailed(event: string, reason: string): void {
+		this.webhookFailed.inc({ event, reason });
 	}
 
 	setCircuitBreakerState(state: CircuitBreakerState): void {

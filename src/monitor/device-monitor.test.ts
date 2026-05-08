@@ -7,9 +7,20 @@ import type { Device, StatusResponse, Worker } from "../rotom/types";
 import { CircuitBreaker } from "../runtime/circuit-breaker";
 import { JobQueue } from "../runtime/job-queue";
 import { ScriptRunner } from "../runtime/script-runner";
+import type { WebhookEvent } from "../webhooks/types";
 import { DeviceMonitor } from "./device-monitor";
 import { OriginStateTracker } from "./origin-state";
 import type { ScriptMode } from "./types";
+
+const createFakeDispatcher = () => {
+	const emitted: WebhookEvent[] = [];
+	return {
+		emit: (event: WebhookEvent) => {
+			emitted.push(event);
+		},
+		emitted,
+	};
+};
 
 const buildDevice = (overrides: Partial<Device> = {}): Device => ({
 	dateConnected: 0,
@@ -80,6 +91,16 @@ const config: Config = {
 	scriptUpdate: "-usc",
 	scriptUpdateAll: "-u",
 	shutdownGracePeriodMs: 500,
+	webhooks: {
+		avatarUrl: "",
+		coalesceWindowMs: 10_000,
+		discordUrls: [],
+		events: new Set(),
+		mentionRoleId: "",
+		retryAttempts: 3,
+		retryInitialDelayMs: 500,
+		username: "rotom-watcher",
+	},
 };
 
 const logger: LoggerLike = {
@@ -599,6 +620,244 @@ describe("DeviceMonitor", () => {
 		).runScheduledCheck();
 
 		expect(scheduledDelays).toEqual([12_345]);
+	});
+
+	test("emits origin.offline.restart when offline mode is restart", async () => {
+		const dispatcher = createFakeDispatcher();
+		const scriptRunner = new TestScriptRunner();
+		const monitor = new DeviceMonitor({
+			circuitBreaker: new CircuitBreaker(
+				5,
+				60_000,
+				logger,
+				() => 15 * 60 * 1_000,
+			),
+			configProvider: createConfigProvider(config),
+			dispatcher,
+			jobQueue: new JobQueue(2, logger),
+			logger,
+			metrics: new Metrics(),
+			now: () => 15 * 60 * 1_000,
+			originStateTracker: new OriginStateTracker(2, logger),
+			scriptRunner,
+			statusApiClient: new TestStatusApiClient(
+				{
+					devices: [
+						buildDevice({
+							dateLastMessageReceived: 0,
+							deviceId: "alpha-stale",
+							isAlive: false,
+							origin: "alpha",
+						}),
+					],
+					workers: [],
+				},
+				[],
+			),
+		});
+
+		await monitor.checkAndRunScript();
+
+		const restartEvents = dispatcher.emitted.filter(
+			(e) => e.name === "origin.offline.restart",
+		);
+		expect(restartEvents).toHaveLength(1);
+		expect(restartEvents[0]).toMatchObject({
+			fields: {
+				attempt: 1,
+				devices: 0,
+				mode: "restart",
+			},
+			name: "origin.offline.restart",
+			subject: "alpha",
+		});
+	});
+
+	test("emits origin.offline.update when offline mode escalates to update", async () => {
+		const dispatcher = createFakeDispatcher();
+		const scriptRunner = new TestScriptRunner();
+		// restartThreshold is 2 in the shared config; seed state with 2 previous failures
+		const originStateTracker = new OriginStateTracker(2, logger);
+		originStateTracker.recordOfflineAttempt("alpha", 0);
+		originStateTracker.recordOfflineAttempt("alpha", 1_000);
+		const monitor = new DeviceMonitor({
+			circuitBreaker: new CircuitBreaker(
+				5,
+				60_000,
+				logger,
+				() => 15 * 60 * 1_000,
+			),
+			configProvider: createConfigProvider(config),
+			dispatcher,
+			jobQueue: new JobQueue(2, logger),
+			logger,
+			metrics: new Metrics(),
+			now: () => 15 * 60 * 1_000,
+			originStateTracker,
+			scriptRunner,
+			statusApiClient: new TestStatusApiClient(
+				{
+					devices: [
+						buildDevice({
+							dateLastMessageReceived: 0,
+							deviceId: "alpha-stale",
+							isAlive: false,
+							origin: "alpha",
+						}),
+					],
+					workers: [],
+				},
+				[],
+			),
+		});
+
+		await monitor.checkAndRunScript();
+
+		const updateEvents = dispatcher.emitted.filter(
+			(e) => e.name === "origin.offline.update",
+		);
+		expect(updateEvents).toHaveLength(1);
+		expect(updateEvents[0]).toMatchObject({
+			fields: {
+				devices: 0,
+				mode: "update",
+				offlineStreak: 3,
+			},
+			name: "origin.offline.update",
+			subject: "alpha",
+		});
+	});
+
+	test("emits poll.failed when API call throws", async () => {
+		const dispatcher = createFakeDispatcher();
+		const failingStatusClient = new TestStatusApiClient(
+			{ devices: [], workers: [] },
+			[],
+		);
+		failingStatusClient.fetchStatus = async () => {
+			throw new Error("network error");
+		};
+
+		const monitor = new DeviceMonitor({
+			circuitBreaker: new CircuitBreaker(5, 60_000, logger, () => 0),
+			configProvider: createConfigProvider(config),
+			dispatcher,
+			jobQueue: new JobQueue(2, logger),
+			logger,
+			metrics: new Metrics(),
+			now: () => 0,
+			originStateTracker: new OriginStateTracker(2, logger),
+			scriptRunner: new TestScriptRunner(),
+			statusApiClient: failingStatusClient,
+		});
+
+		await monitor.checkAndRunScript();
+
+		const failedEvents = dispatcher.emitted.filter(
+			(e) => e.name === "poll.failed",
+		);
+		expect(failedEvents).toHaveLength(1);
+		expect(failedEvents[0]).toMatchObject({
+			fields: {
+				reason: "network error",
+			},
+			name: "poll.failed",
+			subject: "rotom-api",
+		});
+	});
+
+	test("emits device.duplicate_deleted on each successful deletion", async () => {
+		const dispatcher = createFakeDispatcher();
+		const deletedDeviceIds: string[] = [];
+		const monitor = new DeviceMonitor({
+			circuitBreaker: new CircuitBreaker(5, 60_000, logger, () => 60_000),
+			configProvider: createConfigProvider(config),
+			dispatcher,
+			jobQueue: new JobQueue(2, logger),
+			logger,
+			metrics: new Metrics(),
+			now: () => 60_000,
+			originStateTracker: new OriginStateTracker(2, logger),
+			scriptRunner: new TestScriptRunner(),
+			statusApiClient: new TestStatusApiClient(
+				{
+					devices: [
+						buildDevice({
+							dateLastMessageReceived: 0,
+							deviceId: "alpha-dead",
+							isAlive: false,
+							origin: "alpha",
+						}),
+						buildDevice({
+							dateLastMessageReceived: 59_000,
+							deviceId: "alpha-alive",
+							isAlive: true,
+							origin: "alpha",
+						}),
+					],
+					workers: [buildWorker("alpha")],
+				},
+				deletedDeviceIds,
+			),
+		});
+
+		await monitor.checkAndRunScript();
+
+		const deletedEvents = dispatcher.emitted.filter(
+			(e) => e.name === "device.duplicate_deleted",
+		);
+		expect(deletedEvents).toHaveLength(1);
+		expect(deletedEvents[0]).toMatchObject({
+			fields: { deviceId: "alpha-dead", origin: "alpha" },
+			name: "device.duplicate_deleted",
+			subject: "alpha",
+		});
+	});
+
+	test("emits group.pipeline.triggered when group decision fires", async () => {
+		const dispatcher = createFakeDispatcher();
+		const scriptRunner = new TestScriptRunner();
+		const monitor = new DeviceMonitor({
+			circuitBreaker: new CircuitBreaker(5, 60_000, logger, () => 60_000),
+			configProvider: createConfigProvider(config),
+			dispatcher,
+			jobQueue: new JobQueue(2, logger),
+			logger,
+			metrics: new Metrics(),
+			now: () => 60_000,
+			originStateTracker: new OriginStateTracker(2, logger),
+			scriptRunner,
+			statusApiClient: new TestStatusApiClient(
+				{
+					devices: [
+						buildDevice({
+							deviceId: "x.1-device",
+							isAlive: false,
+							origin: "x.1",
+						}),
+						buildDevice({
+							deviceId: "x.2-device",
+							isAlive: false,
+							origin: "x.2",
+						}),
+					],
+					workers: [],
+				},
+				[],
+			),
+		});
+
+		await monitor.checkAndRunScript();
+
+		const groupEvents = dispatcher.emitted.filter(
+			(e) => e.name === "group.pipeline.triggered",
+		);
+		expect(groupEvents).toHaveLength(1);
+		expect(groupEvents[0]).toMatchObject({
+			fields: { groupSize: 2, trigger: "fully-dead-group" },
+			name: "group.pipeline.triggered",
+			subject: "x",
+		});
 	});
 
 	test("does not execute the group pipeline when no group qualifies", async () => {

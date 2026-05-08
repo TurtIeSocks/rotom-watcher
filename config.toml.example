@@ -38,3 +38,39 @@ port = 9090
 
 [shutdown]
 grace_period_ms = 60000
+
+[webhooks]
+discord = []                       # Discord webhook URLs
+
+# All available events. Uncomment any you want delivered.
+events = [
+  # Critical (4) — pinged via mention_role_id when set
+  # "circuit_breaker.opened",
+  # "origin.offline.update",
+  # "queue.saturated",
+  # "script.failed",
+
+  # Warning (4)
+  # "circuit_breaker.half_open",
+  # "origin.offline.restart",
+  # "poll.failed",
+  # "script.timed_out",
+
+  # Success (3)
+  # "circuit_breaker.closed",
+  # "origin.recovered",
+  # "script.succeeded",
+
+  # Info (4)
+  # "device.duplicate_deleted",
+  # "group.pipeline.triggered",
+  # "service.started",
+  # "service.stopping",
+]
+
+mention_role_id        = ""        # Discord role ID; pinged ONLY on Critical events
+coalesce_window_ms     = 10000     # 0 disables coalescing
+retry_attempts         = 3
+retry_initial_delay_ms = 500
+username               = "rotom-watcher"
+avatar_url             = ""

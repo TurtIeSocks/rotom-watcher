@@ -2,6 +2,9 @@ import path from "node:path";
 
 import { z } from "zod";
 
+import { EVENT_NAMES } from "../webhooks/events";
+import type { EventName } from "../webhooks/types";
+
 export interface Config {
 	checkIntervalMs: number;
 	circuitBreakerResetMs: number;
@@ -26,6 +29,16 @@ export interface Config {
 	scriptUpdate: string;
 	scriptUpdateAll: string;
 	shutdownGracePeriodMs: number;
+	webhooks: {
+		avatarUrl: string;
+		coalesceWindowMs: number;
+		discordUrls: string[];
+		events: ReadonlySet<EventName>;
+		mentionRoleId: string;
+		retryAttempts: number;
+		retryInitialDelayMs: number;
+		username: string;
+	};
 }
 
 export interface ConfigProvider {
@@ -38,6 +51,16 @@ export interface CreateConfigOptions {
 }
 
 const defaultScriptPath = path.resolve(import.meta.dir, "../../oci.sh");
+
+const splitCommaList = (value: unknown): unknown => {
+	if (typeof value === "string") {
+		return value
+			.split(",")
+			.map((entry) => entry.trim())
+			.filter((entry) => entry.length > 0);
+	}
+	return value;
+};
 
 const fileConfigMappings = [
 	{
@@ -132,6 +155,38 @@ const fileConfigMappings = [
 		envKey: "SHUTDOWN_GRACE_PERIOD_MS",
 		path: ["shutdown", "grace_period_ms"],
 	},
+	{
+		envKey: "WEBHOOKS_DISCORD",
+		path: ["webhooks", "discord"],
+	},
+	{
+		envKey: "WEBHOOKS_EVENTS",
+		path: ["webhooks", "events"],
+	},
+	{
+		envKey: "WEBHOOKS_MENTION_ROLE_ID",
+		path: ["webhooks", "mention_role_id"],
+	},
+	{
+		envKey: "WEBHOOKS_COALESCE_WINDOW_MS",
+		path: ["webhooks", "coalesce_window_ms"],
+	},
+	{
+		envKey: "WEBHOOKS_RETRY_ATTEMPTS",
+		path: ["webhooks", "retry_attempts"],
+	},
+	{
+		envKey: "WEBHOOKS_RETRY_INITIAL_DELAY_MS",
+		path: ["webhooks", "retry_initial_delay_ms"],
+	},
+	{
+		envKey: "WEBHOOKS_USERNAME",
+		path: ["webhooks", "username"],
+	},
+	{
+		envKey: "WEBHOOKS_AVATAR_URL",
+		path: ["webhooks", "avatar_url"],
+	},
 ] as const;
 
 const positiveInteger = (name: string, defaultValue: number) =>
@@ -159,6 +214,25 @@ const positiveIntegerWithMinimum = (
 			.int(`${name} must be an integer`)
 			.gte(minimum, `${name} must be at least ${minimum}`),
 	);
+
+const nonNegativeInteger = (name: string, defaultValue: number) =>
+	z.preprocess(
+		(value) => value ?? defaultValue,
+		z.coerce
+			.number({
+				error: `${name} must be a valid number`,
+			})
+			.int(`${name} must be an integer`)
+			.gte(0, `${name} must be at least 0`),
+	);
+
+const isHttpsUrl = (value: string): boolean => {
+	try {
+		return new URL(value).protocol === "https:";
+	} catch {
+		return false;
+	}
+};
 
 const configSchema = z
 	.object({
@@ -238,6 +312,53 @@ const configSchema = z
 			"SHUTDOWN_GRACE_PERIOD_MS",
 			60_000,
 		),
+		WEBHOOKS_AVATAR_URL: z.preprocess(
+			(value) => value ?? "",
+			z
+				.string()
+				.refine(
+					(value) => value === "" || isHttpsUrl(value),
+					"WEBHOOKS_AVATAR_URL must be empty or a valid HTTPS URL",
+				),
+		),
+		WEBHOOKS_COALESCE_WINDOW_MS: nonNegativeInteger(
+			"WEBHOOKS_COALESCE_WINDOW_MS",
+			10_000,
+		),
+		WEBHOOKS_DISCORD: z.preprocess(
+			(value) => splitCommaList(value) ?? [],
+			z.array(
+				z
+					.string()
+					.url("WEBHOOKS_DISCORD entries must be valid URLs")
+					.refine(isHttpsUrl, "WEBHOOKS_DISCORD entries must use https"),
+			),
+		),
+		WEBHOOKS_EVENTS: z.preprocess(
+			(value) => splitCommaList(value) ?? [],
+			z.array(z.enum(EVENT_NAMES)),
+		),
+		WEBHOOKS_MENTION_ROLE_ID: z.preprocess(
+			(value) => value ?? "",
+			z
+				.string()
+				.refine(
+					(value) => value === "" || /^\d+$/.test(value),
+					"WEBHOOKS_MENTION_ROLE_ID must be empty or a Discord snowflake (digits only)",
+				),
+		),
+		WEBHOOKS_RETRY_ATTEMPTS: nonNegativeInteger("WEBHOOKS_RETRY_ATTEMPTS", 3),
+		WEBHOOKS_RETRY_INITIAL_DELAY_MS: positiveInteger(
+			"WEBHOOKS_RETRY_INITIAL_DELAY_MS",
+			500,
+		),
+		WEBHOOKS_USERNAME: z.preprocess(
+			(value) => value ?? "rotom-watcher",
+			z
+				.string()
+				.min(1, "WEBHOOKS_USERNAME must not be empty")
+				.max(80, "WEBHOOKS_USERNAME must be at most 80 characters"),
+		),
 	})
 	.transform(
 		(values): Config => ({
@@ -264,6 +385,16 @@ const configSchema = z
 			scriptUpdate: values.SCRIPT_UPDATE_ARG,
 			scriptUpdateAll: values.SCRIPT_UPDATE_ALL_ARG,
 			shutdownGracePeriodMs: values.SHUTDOWN_GRACE_PERIOD_MS,
+			webhooks: {
+				avatarUrl: values.WEBHOOKS_AVATAR_URL,
+				coalesceWindowMs: values.WEBHOOKS_COALESCE_WINDOW_MS,
+				discordUrls: values.WEBHOOKS_DISCORD,
+				events: new Set(values.WEBHOOKS_EVENTS),
+				mentionRoleId: values.WEBHOOKS_MENTION_ROLE_ID,
+				retryAttempts: values.WEBHOOKS_RETRY_ATTEMPTS,
+				retryInitialDelayMs: values.WEBHOOKS_RETRY_INITIAL_DELAY_MS,
+				username: values.WEBHOOKS_USERNAME,
+			},
 		}),
 	);
 

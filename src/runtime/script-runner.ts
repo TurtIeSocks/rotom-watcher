@@ -6,10 +6,12 @@ import type { LoggerLike } from "../observability/logger";
 import type { Metrics, ScriptFailureReason } from "../observability/metrics";
 import {
 	calculateRetryDelay,
+	generateRunId,
 	sanitizeOrigin,
 	sleep,
 	truncateOutput,
 } from "../shared/utils";
+import type { WebhookEmitter } from "../webhooks/types";
 
 export class ScriptExecutionError extends Error {
 	constructor(
@@ -29,12 +31,14 @@ export class ScriptRunner {
 		private readonly sleepFn: typeof sleep = sleep,
 		private readonly random: () => number = Math.random,
 		private readonly spawnImplementation: typeof spawn = spawn,
+		private readonly dispatcher?: WebhookEmitter,
 	) {}
 
 	async execute(
 		origin: string,
 		scriptMode: ScriptMode,
 		attempt = 0,
+		runId: string = generateRunId(this.random),
 	): Promise<void> {
 		const config = this.configProvider.getConfig();
 		const sanitizedOrigin = sanitizeOrigin(origin);
@@ -71,6 +75,8 @@ export class ScriptRunner {
 				sanitizedOrigin,
 				scriptMode,
 				startTime,
+				attempt,
+				runId,
 			);
 		} catch (error) {
 			if (attempt >= config.maxRetries) {
@@ -97,7 +103,7 @@ export class ScriptRunner {
 			);
 
 			await this.sleepFn(delay);
-			await this.execute(origin, scriptMode, attempt + 1);
+			await this.execute(origin, scriptMode, attempt + 1, runId);
 		}
 	}
 
@@ -125,6 +131,8 @@ export class ScriptRunner {
 		origin: string,
 		scriptMode: ScriptMode,
 		startTime: number,
+		attempt: number,
+		runId: string,
 	): Promise<void> {
 		return new Promise((resolve, reject) => {
 			let completed = false;
@@ -180,6 +188,8 @@ export class ScriptRunner {
 						startTime,
 						"timeout",
 						failureDetails,
+						attempt,
+						runId,
 					),
 				);
 			};
@@ -235,12 +245,20 @@ export class ScriptRunner {
 				clearTimeout(timeoutId);
 				clearEscalationTimers();
 				reject(
-					this.handleFailure(origin, scriptMode, startTime, "spawn_error", {
-						config,
-						error,
-						stderr,
-						stdout,
-					}),
+					this.handleFailure(
+						origin,
+						scriptMode,
+						startTime,
+						"spawn_error",
+						{
+							config,
+							error,
+							stderr,
+							stdout,
+						},
+						attempt,
+						runId,
+					),
 				);
 			});
 
@@ -255,13 +273,21 @@ export class ScriptRunner {
 
 				if (timeoutTriggered) {
 					reject(
-						this.handleFailure(origin, scriptMode, startTime, "timeout", {
-							config,
-							code,
-							signal,
-							stderr,
-							stdout,
-						}),
+						this.handleFailure(
+							origin,
+							scriptMode,
+							startTime,
+							"timeout",
+							{
+								config,
+								code,
+								signal,
+								stderr,
+								stdout,
+							},
+							attempt,
+							runId,
+						),
 					);
 					return;
 				}
@@ -272,26 +298,42 @@ export class ScriptRunner {
 
 				if (signal) {
 					reject(
-						this.handleFailure(origin, scriptMode, startTime, "signal", {
-							config,
-							code,
-							signal,
-							stderr,
-							stdout,
-						}),
+						this.handleFailure(
+							origin,
+							scriptMode,
+							startTime,
+							"signal",
+							{
+								config,
+								code,
+								signal,
+								stderr,
+								stdout,
+							},
+							attempt,
+							runId,
+						),
 					);
 					return;
 				}
 
 				if (code !== 0) {
 					reject(
-						this.handleFailure(origin, scriptMode, startTime, "exit_code", {
-							config,
-							code,
-							signal,
-							stderr,
-							stdout,
-						}),
+						this.handleFailure(
+							origin,
+							scriptMode,
+							startTime,
+							"exit_code",
+							{
+								config,
+								code,
+								signal,
+								stderr,
+								stdout,
+							},
+							attempt,
+							runId,
+						),
 					);
 					return;
 				}
@@ -329,6 +371,11 @@ export class ScriptRunner {
 					},
 					"Recovery script completed",
 				);
+				this.dispatcher?.emit({
+					fields: { attempt: attempt + 1, durationMs, mode: scriptMode, runId },
+					name: "script.succeeded",
+					subject: origin,
+				});
 				resolve();
 			});
 		});
@@ -347,6 +394,8 @@ export class ScriptRunner {
 			stderr: string;
 			stdout: string;
 		},
+		attempt: number,
+		runId: string,
 	): ScriptExecutionError {
 		const durationMs = Date.now() - startTime;
 		const stdout = truncateOutput(details.stdout.trim());
@@ -367,6 +416,37 @@ export class ScriptRunner {
 			},
 			"Recovery script failed",
 		);
+
+		const config = this.configProvider.getConfig();
+		const isTimeout = reason === "timeout";
+		const isFinalAttempt = attempt >= config.maxRetries;
+
+		if (isTimeout) {
+			this.dispatcher?.emit({
+				fields: {
+					attempt: attempt + 1,
+					mode: scriptMode,
+					runId,
+					timeoutMs: config.scriptTimeoutMs,
+				},
+				name: "script.timed_out",
+				subject: origin,
+			});
+		}
+
+		if (isFinalAttempt) {
+			this.dispatcher?.emit({
+				fields: {
+					attempts: attempt + 1,
+					durationMs,
+					exitCode: details.code ?? null,
+					mode: scriptMode,
+					runId,
+				},
+				name: "script.failed",
+				subject: origin,
+			});
+		}
 
 		const message =
 			reason === "timeout"

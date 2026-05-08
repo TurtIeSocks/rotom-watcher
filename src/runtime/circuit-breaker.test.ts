@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { LoggerLike } from "../observability/logger";
+import type { WebhookEvent } from "../webhooks/types";
 import { CircuitBreaker } from "./circuit-breaker";
 
 const logger: LoggerLike = {
@@ -7,6 +8,21 @@ const logger: LoggerLike = {
 	error: () => undefined,
 	info: () => undefined,
 	warn: () => undefined,
+};
+
+interface FakeDispatcher {
+	emitted: WebhookEvent[];
+	emit(event: WebhookEvent): void;
+}
+
+const createFakeDispatcher = (): FakeDispatcher => {
+	const emitted: WebhookEvent[] = [];
+	return {
+		emit: (event) => {
+			emitted.push(event);
+		},
+		emitted,
+	};
 };
 
 describe("CircuitBreaker", () => {
@@ -47,5 +63,28 @@ describe("CircuitBreaker", () => {
 
 		now = 100;
 		expect(breaker.canExecute()).toBe(true);
+	});
+
+	test("emits circuit_breaker.opened/half_open/closed events", () => {
+		let now = 0;
+		const dispatcher = createFakeDispatcher();
+		const breaker = new CircuitBreaker(2, 500, logger, () => now, dispatcher);
+
+		breaker.recordFailure();
+		breaker.recordFailure();
+		expect(
+			dispatcher.emitted.find((e) => e.name === "circuit_breaker.opened"),
+		).toBeDefined();
+
+		now = 600;
+		breaker.canExecute();
+		expect(
+			dispatcher.emitted.find((e) => e.name === "circuit_breaker.half_open"),
+		).toBeDefined();
+
+		breaker.recordSuccess();
+		expect(
+			dispatcher.emitted.find((e) => e.name === "circuit_breaker.closed"),
+		).toBeDefined();
 	});
 });

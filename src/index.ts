@@ -1,3 +1,4 @@
+import packageJson from "../package.json" with { type: "json" };
 import { resolveConfigPath } from "./config/file";
 import { ConfigManager } from "./config/manager";
 import { DeviceMonitor } from "./monitor/device-monitor";
@@ -9,6 +10,8 @@ import { RotomApiClient } from "./rotom/client";
 import { CircuitBreaker } from "./runtime/circuit-breaker";
 import { JobQueue } from "./runtime/job-queue";
 import { ScriptRunner } from "./runtime/script-runner";
+import { DiscordTransport } from "./webhooks/discord-transport";
+import { WebhookDispatcher } from "./webhooks/dispatcher";
 
 const configManager = new ConfigManager({
 	configPath: resolveConfigPath(),
@@ -22,10 +25,23 @@ const logger = createLogger({
 configManager.setLogger(logger);
 
 const metrics = new Metrics();
+const discordTransport = new DiscordTransport({
+	config: initialConfig.webhooks,
+	logger,
+	metrics,
+});
+const webhookDispatcher = new WebhookDispatcher({
+	config: initialConfig.webhooks,
+	logger,
+	metrics,
+	transport: discordTransport,
+});
 const circuitBreaker = new CircuitBreaker(
 	initialConfig.circuitBreakerThreshold,
 	initialConfig.circuitBreakerResetMs,
 	logger,
+	undefined,
+	webhookDispatcher,
 );
 // Dedicated breaker for device-deletion calls. A flaky delete endpoint
 // shouldn't block status fetches and thus freeze the recovery loop; and a
@@ -35,6 +51,8 @@ const deletionCircuitBreaker = new CircuitBreaker(
 	initialConfig.circuitBreakerThreshold,
 	initialConfig.circuitBreakerResetMs,
 	logger,
+	undefined,
+	webhookDispatcher,
 );
 const originStateTracker = new OriginStateTracker(
 	initialConfig.restartThreshold,
@@ -48,6 +66,7 @@ const originStateTracker = new OriginStateTracker(
 			initialConfig.checkIntervalMs * 100,
 		),
 	},
+	webhookDispatcher,
 );
 // Hard ceiling on how long a single job may hold an origin slot. Set well
 // above the worst-case script execution path (timeout + SIGKILL escalation +
@@ -63,8 +82,17 @@ const jobQueue = new JobQueue(
 	logger,
 	metrics,
 	{ stuckJobTimeoutMs },
+	webhookDispatcher,
 );
-const scriptRunner = new ScriptRunner(configManager, logger, metrics);
+const scriptRunner = new ScriptRunner(
+	configManager,
+	logger,
+	metrics,
+	undefined,
+	undefined,
+	undefined,
+	webhookDispatcher,
+);
 const statusApiClient = new RotomApiClient(configManager, metrics);
 const observabilityServer = new ObservabilityServer(
 	initialConfig.metricsHost,
@@ -104,12 +132,24 @@ configManager.subscribe(({ changedKeys, config }) => {
 
 const monitor = new DeviceMonitor({
 	circuitBreaker,
-	deletionCircuitBreaker,
 	configProvider: configManager,
+	deletionCircuitBreaker,
+	dispatcher: webhookDispatcher,
 	jobQueue,
 	logger,
 	metrics,
-	onShutdown: async () => {
+	onShutdown: async (signal: string) => {
+		const queueStatus = jobQueue.getStatus();
+		webhookDispatcher.emit({
+			fields: {
+				queuedJobs: queueStatus.queued,
+				reason: signal,
+				runningJobs: queueStatus.running,
+			},
+			name: "service.stopping",
+			subject: "rotom-watcher",
+		});
+		await webhookDispatcher.flush();
 		configManager.close();
 		observabilityServer.stop();
 	},
@@ -121,3 +161,16 @@ const monitor = new DeviceMonitor({
 observabilityServer.start();
 configManager.startWatching();
 monitor.start();
+webhookDispatcher.emit({
+	fields: {
+		concurrency: initialConfig.maxConcurrentJobs,
+		// origins is a placeholder pending downstream wiring; a real count would
+		// require coordinating with the device monitor's first poll.
+		origins: 0,
+		pid: process.pid,
+		pollIntervalMs: initialConfig.checkIntervalMs,
+		version: packageJson.version,
+	},
+	name: "service.started",
+	subject: "rotom-watcher",
+});

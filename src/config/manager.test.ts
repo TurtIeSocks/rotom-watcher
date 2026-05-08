@@ -255,4 +255,77 @@ level = "trace"
 			}),
 		).toBe(path.resolve("./deploy/rotom.toml"));
 	});
+
+	test("notifies listeners when webhooks.events changes to different contents", () => {
+		const directory = mkdtempSync(path.join(tmpdir(), "rotom-config-manager-"));
+		const configPath = path.join(directory, "config.toml");
+		writeFileSync(
+			configPath,
+			`
+[rotom_api]
+base_url = "https://file.example.com"
+
+[webhooks]
+events = ["origin.recovered"]
+`,
+			"utf8",
+		);
+
+		let receivedEvent: import("./manager").ConfigReloadEvent | undefined;
+		const manager = new ConfigManager({
+			configPath,
+			env: {},
+			logger,
+		});
+
+		manager.subscribe((event) => {
+			receivedEvent = event;
+		});
+
+		writeFileSync(
+			configPath,
+			`
+[rotom_api]
+base_url = "https://file.example.com"
+
+[webhooks]
+events = ["script.failed"]
+`,
+			"utf8",
+		);
+
+		manager.reloadFromDisk();
+
+		expect(receivedEvent).toBeDefined();
+		expect(receivedEvent?.changedKeys).toContain("webhooks");
+	});
+
+	test("does not notify listeners when webhooks.events reloads with identical contents", () => {
+		const directory = mkdtempSync(path.join(tmpdir(), "rotom-config-manager-"));
+		const configPath = path.join(directory, "config.toml");
+		const toml = `
+[rotom_api]
+base_url = "https://file.example.com"
+
+[webhooks]
+events = ["origin.recovered"]
+`;
+		writeFileSync(configPath, toml, "utf8");
+
+		let notifications = 0;
+		const manager = new ConfigManager({
+			configPath,
+			env: {},
+			logger,
+		});
+
+		manager.subscribe(() => {
+			notifications++;
+		});
+
+		// Reload without changing the file — same events, fresh Set reference
+		manager.reloadFromDisk();
+
+		expect(notifications).toBe(0);
+	});
 });

@@ -1,4 +1,5 @@
 import type { LoggerLike } from "../observability/logger";
+import type { WebhookEmitter } from "../webhooks/types";
 import type {
 	OfflineAttemptResult,
 	OriginState,
@@ -25,6 +26,7 @@ export class OriginStateTracker {
 		restartThreshold: number,
 		private readonly logger?: LoggerLike,
 		options: OriginStateTrackerOptions = {},
+		private readonly dispatcher?: WebhookEmitter,
 	) {
 		this.restartThreshold = restartThreshold;
 		this.maxEntryAgeMs = options.maxEntryAgeMs ?? 0;
@@ -53,10 +55,29 @@ export class OriginStateTracker {
 	}
 
 	clearOriginState(origin: string): void {
-		if (this.states.has(origin)) {
-			this.logger?.debug({ origin }, "Clearing origin state after recovery");
-			this.states.delete(origin);
+		const state = this.states.get(origin);
+		if (!state) {
+			return;
 		}
+		this.logger?.debug({ origin }, "Clearing origin state after recovery");
+		this.states.delete(origin);
+		this.dispatcher?.emit({
+			fields: {
+				// `devices` and `downForMs` are placeholders: OriginState doesn't carry
+				// per-origin device counts or first-offline timestamps. Plumbing real
+				// values requires a separate refactor; the recovery signal itself is
+				// the operationally important part.
+				devices: 0,
+				downForMs: 0,
+				lastScript:
+					state.successiveOfflineCount >= this.restartThreshold
+						? "update"
+						: "restart",
+				result: "success",
+			},
+			name: "origin.recovered",
+			subject: origin,
+		});
 	}
 
 	cleanupOnlineOrigins(onlineOrigins: string[]): void {

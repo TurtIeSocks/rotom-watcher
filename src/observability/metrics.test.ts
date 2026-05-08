@@ -41,4 +41,21 @@ describe("Metrics", () => {
 			"rotom_watcher_last_successful_poll_timestamp_seconds",
 		);
 	});
+
+	test("webhook metrics render through the registry", async () => {
+		const metrics = new Metrics();
+		metrics.recordWebhookDelivered("script.failed", "critical");
+		metrics.recordWebhookFailed("script.failed", "5xx");
+		metrics.recordWebhookCoalesced("origin.offline.update", 3);
+		const output = await metrics.render();
+		expect(output).toContain(
+			'rotom_watcher_webhook_events_delivered_total{event="script.failed",severity="critical"} 1',
+		);
+		expect(output).toContain(
+			'rotom_watcher_webhook_events_failed_total{event="script.failed",reason="5xx"} 1',
+		);
+		expect(output).toContain(
+			'rotom_watcher_webhook_events_coalesced_total{event="origin.offline.update"} 3',
+		);
+	});
 });

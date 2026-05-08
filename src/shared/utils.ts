@@ -92,3 +92,23 @@ export const fetchWithTimeout = async (
 	cancel();
 	return response;
 };
+
+export const formatDuration = (ms: number): string => {
+	if (ms < 1000) {
+		return `${ms}ms`;
+	}
+	const totalSeconds = Math.floor(ms / 1000);
+	const minutes = Math.floor(totalSeconds / 60);
+	const seconds = totalSeconds % 60;
+	if (minutes === 0) {
+		return `${seconds}s`;
+	}
+	return `${minutes}m ${seconds}s`;
+};
+
+export const generateRunId = (random: () => number = Math.random): string => {
+	const part = Math.floor(random() * 0xffffff)
+		.toString(16)
+		.padStart(6, "0");
+	return `r-${part.slice(0, 4)}`;
+};
